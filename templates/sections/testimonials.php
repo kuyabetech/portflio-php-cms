@@ -17,7 +17,7 @@ if (empty($testimonials)) {
 ?>
 
 <!-- Testimonials Carousel Section -->
-<section class="testimonials-carousel section">
+<section class="testimonials-carousel section" id="testimonials">
     <div class="container">
         <div class="section-header">
             <h2>Testimonials</h2>

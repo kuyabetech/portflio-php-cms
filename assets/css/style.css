@@ -1745,32 +1745,7 @@ p {
     .testimonial-card {
         padding: var(--spacing-lg);
     }
-    
-    /* Contact Section */
-    .contact-wrapper {
-        grid-template-columns: 1fr;
-    }
-    
-    .contact-info {
-        padding: var(--spacing-lg);
-    }
-    
-    .contact-form-wrapper {
-        padding: var(--spacing-lg);
-    }
-    
-    .form-row {
-        grid-template-columns: 1fr;
-    }
-    
-    .contact-item {
-        flex-direction: column;
-        text-align: center;
-    }
-    
-    .contact-item i {
-        margin-bottom: var(--spacing-xs);
-    }
+     }
     
     /* Footer */
     .footer-content {
@@ -1883,14 +1858,7 @@ p {
         text-align: center;
     }
     
-    /* Contact */
-    .contact-info h2 {
-        font-size: 1.5rem;
-    }
-    
-    .contact-item {
-        padding: var(--spacing-sm);
-    }
+   
     
     /* Footer */
     .footer-links ul {

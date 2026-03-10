@@ -121,13 +121,8 @@ function truncateEmail($email, $length = 25) {
     return substr($email, 0, $length) . '...';
 }
 
-/*function truncate($text, $length = 80) {
-    if (strlen($text) <= $length) {
-        return $text;
-    }
-    return substr($text, 0, $length) . '...';
-}
-*/
+
+
 // Get filter parameters
 $filter = $_GET['filter'] ?? 'all';
 $search = $_GET['search'] ?? '';
@@ -228,7 +223,8 @@ require_once 'includes/header.php';
 
 <!-- Flash Messages -->
 <?php if (isset($_SESSION['flash'])): ?>
-    <div class="alert alert-<?php echo $_SESSION['flash']['type']; ?>">
+    <div class="alert alert-<?php echo $_SESSION['flash']['type']; ?> alert-dismissible">
+        <i class="fas <?php echo $_SESSION['flash']['type'] === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'; ?>"></i>
         <?php echo $_SESSION['flash']['message']; ?>
         <button class="alert-close" onclick="this.parentElement.remove()">&times;</button>
     </div>
@@ -273,7 +269,7 @@ require_once 'includes/header.php';
         <div class="stat-icon teal">
             <i class="fas fa-calendar-week"></i>
         </div>
-        <div class="stat-details">
+        <div class-="stat-details">
             <h3>This Week</h3>
             <span class="stat-value"><?php echo $stats['this_week']; ?></span>
             <span class="stat-label">total messages</span>
@@ -329,6 +325,39 @@ require_once 'includes/header.php';
     </form>
 </div>
 
+<!-- Mobile Filter Bar (visible on small screens) -->
+<div class="mobile-filter-bar">
+    <select class="mobile-filter-select" onchange="window.location.href=this.value">
+        <option value="?filter=all" <?php echo $filter === 'all' ? 'selected' : ''; ?>>All Messages</option>
+        <option value="?filter=unread" <?php echo $filter === 'unread' ? 'selected' : ''; ?>>Unread Only</option>
+        <option value="?filter=read" <?php echo $filter === 'read' ? 'selected' : ''; ?>>Read Only</option>
+    </select>
+    
+    <button class="btn btn-outline btn-sm" onclick="toggleMobileSearch()">
+        <i class="fas fa-search"></i> Search
+    </button>
+</div>
+
+<!-- Mobile Search Panel (hidden by default) -->
+<div class="mobile-search-panel" id="mobileSearchPanel" style="display: none;">
+    <form method="GET" class="mobile-search-form">
+        <input type="hidden" name="filter" value="<?php echo $filter; ?>">
+        <div class="mobile-search-group">
+            <input type="text" name="search" placeholder="Search messages..." value="<?php echo htmlspecialchars($search); ?>">
+        </div>
+        <div class="mobile-search-group">
+            <input type="date" name="date_from" value="<?php echo $date_from; ?>" placeholder="From">
+        </div>
+        <div class="mobile-search-group">
+            <input type="date" name="date_to" value="<?php echo $date_to; ?>" placeholder="To">
+        </div>
+        <div class="mobile-search-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+            <a href="messages.php" class="btn btn-outline btn-sm">Reset</a>
+        </div>
+    </form>
+</div>
+
 <!-- Bulk Actions Bar - Responsive -->
 <form method="POST" id="bulkForm">
     <div class="bulk-actions-bar">
@@ -348,8 +377,8 @@ require_once 'includes/header.php';
         </div>
     </div>
 
-    <!-- Messages Table - Responsive with horizontal scroll on mobile -->
-    <div class="table-responsive">
+    <!-- Messages Table - Desktop View -->
+    <div class="table-responsive desktop-table">
         <table class="admin-table messages-table">
             <thead>
                 <tr>
@@ -466,31 +495,148 @@ require_once 'includes/header.php';
             </tbody>
         </table>
     </div>
+
+    <!-- Mobile Cards View -->
+    <div class="mobile-cards">
+        <?php foreach ($messages as $message): 
+            $isUnread = !$message['is_read'];
+        ?>
+        <div class="message-card <?php echo $isUnread ? 'unread' : ''; ?>" data-message-id="<?php echo $message['id']; ?>">
+            <div class="card-header">
+                <div class="card-checkbox">
+                    <input type="checkbox" name="selected[]" value="<?php echo $message['id']; ?>" class="select-item-mobile">
+                </div>
+                <div class="card-status">
+                    <span class="status-indicator <?php echo $isUnread ? 'pulse' : ''; ?>">
+                        <i class="fas fa-circle"></i>
+                    </span>
+                </div>
+                <div class="card-title">
+                    <strong><?php echo htmlspecialchars($message['name']); ?></strong>
+                    <?php if (!empty($message['company'])): ?>
+                    <span class="company-tag"><?php echo htmlspecialchars($message['company']); ?></span>
+                    <?php endif; ?>
+                </div>
+                <div class="card-date">
+                    <?php echo date('M d', strtotime($message['created_at'])); ?>
+                </div>
+            </div>
+            
+            <div class="card-body">
+                <div class="card-contact">
+                    <a href="mailto:<?php echo $message['email']; ?>" class="contact-link">
+                        <i class="fas fa-envelope"></i> <?php echo htmlspecialchars(truncateEmail($message['email'], 25)); ?>
+                    </a>
+                    <?php if (!empty($message['phone'])): ?>
+                    <a href="tel:<?php echo $message['phone']; ?>" class="contact-link">
+                        <i class="fas fa-phone"></i> <?php echo htmlspecialchars($message['phone']); ?>
+                    </a>
+                    <?php endif; ?>
+                </div>
+                
+                <div class="card-subject">
+                    <strong>Subject:</strong> 
+                    <?php echo $message['subject'] ? htmlspecialchars($message['subject']) : '<em>No Subject</em>'; ?>
+                </div>
+                
+                <div class="card-message">
+                    <?php echo htmlspecialchars(truncate($message['message'], 100)); ?>
+                </div>
+                
+                <div class="card-time">
+                    <i class="far fa-clock"></i> <?php echo date('h:i A', strtotime($message['created_at'])); ?>
+                </div>
+            </div>
+            
+            <div class="card-footer">
+                <div class="card-actions">
+                    <a href="view-message.php?id=<?php echo $message['id']; ?>" class="btn btn-sm btn-outline" title="View">
+                        <i class="fas fa-eye"></i> View
+                    </a>
+                    
+                    <?php if ($isUnread): ?>
+                    <a href="?read=<?php echo $message['id']; ?>" class="btn btn-sm btn-outline" title="Mark as Read">
+                        <i class="fas fa-check"></i> Read
+                    </a>
+                    <?php else: ?>
+                    <a href="?unread=<?php echo $message['id']; ?>" class="btn btn-sm btn-outline" title="Mark as Unread">
+                        <i class="fas fa-envelope"></i> Unread
+                    </a>
+                    <?php endif; ?>
+                    
+                    <a href="mailto:<?php echo $message['email']; ?>?subject=Re: <?php echo urlencode($message['subject']); ?>" 
+                       class="btn btn-sm btn-outline" title="Reply">
+                        <i class="fas fa-reply"></i> Reply
+                    </a>
+                    
+                    <a href="?delete=<?php echo $message['id']; ?>" class="btn btn-sm btn-outline-danger" 
+                       onclick="return confirm('Delete this message?')" title="Delete">
+                        <i class="fas fa-trash"></i> Delete
+                    </a>
+                </div>
+            </div>
+        </div>
+        <?php endforeach; ?>
+        
+        <?php if (empty($messages)): ?>
+        <div class="empty-state">
+            <i class="fas fa-envelope-open"></i>
+            <h4>No messages found</h4>
+            <p>Try adjusting your filters or check back later</p>
+        </div>
+        <?php endif; ?>
+    </div>
 </form>
 
 <!-- Pagination - Responsive -->
 <?php if ($totalPages > 1): ?>
-<div class="pagination">
-    <?php if ($page > 1): ?>
-    <a href="?p=<?php echo $page - 1; ?>&filter=<?php echo $filter; ?>&search=<?php echo urlencode($search); ?>&date_from=<?php echo $date_from; ?>&date_to=<?php echo $date_to; ?>" 
-       class="page-link">
-        <i class="fas fa-chevron-left"></i>
-    </a>
-    <?php endif; ?>
-    
-    <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-    <a href="?p=<?php echo $i; ?>&filter=<?php echo $filter; ?>&search=<?php echo urlencode($search); ?>&date_from=<?php echo $date_from; ?>&date_to=<?php echo $date_to; ?>" 
-       class="page-link <?php echo $i === $page ? 'active' : ''; ?>">
-        <?php echo $i; ?>
-    </a>
-    <?php endfor; ?>
-    
-    <?php if ($page < $totalPages): ?>
-    <a href="?p=<?php echo $page + 1; ?>&filter=<?php echo $filter; ?>&search=<?php echo urlencode($search); ?>&date_from=<?php echo $date_from; ?>&date_to=<?php echo $date_to; ?>" 
-       class="page-link">
-        <i class="fas fa-chevron-right"></i>
-    </a>
-    <?php endif; ?>
+<div class="pagination-container">
+    <div class="pagination-info">
+        Page <?php echo $page; ?> of <?php echo $totalPages; ?>
+    </div>
+    <div class="pagination">
+        <?php if ($page > 1): ?>
+        <a href="?p=<?php echo $page - 1; ?>&filter=<?php echo $filter; ?>&search=<?php echo urlencode($search); ?>&date_from=<?php echo $date_from; ?>&date_to=<?php echo $date_to; ?>" 
+           class="page-link" title="Previous page">
+            <i class="fas fa-chevron-left"></i>
+        </a>
+        <?php endif; ?>
+        
+        <?php
+        $range = 2;
+        $start = max(1, $page - $range);
+        $end = min($totalPages, $page + $range);
+        
+        if ($start > 1): ?>
+        <a href="?p=1&filter=<?php echo $filter; ?>&search=<?php echo urlencode($search); ?>&date_from=<?php echo $date_from; ?>&date_to=<?php echo $date_to; ?>" 
+           class="page-link">1</a>
+        <?php if ($start > 2): ?>
+        <span class="page-dots">...</span>
+        <?php endif; ?>
+        <?php endif; ?>
+        
+        <?php for ($i = $start; $i <= $end; $i++): ?>
+        <a href="?p=<?php echo $i; ?>&filter=<?php echo $filter; ?>&search=<?php echo urlencode($search); ?>&date_from=<?php echo $date_from; ?>&date_to=<?php echo $date_to; ?>" 
+           class="page-link <?php echo $i === $page ? 'active' : ''; ?>">
+            <?php echo $i; ?>
+        </a>
+        <?php endfor; ?>
+        
+        <?php if ($end < $totalPages): ?>
+        <?php if ($end < $totalPages - 1): ?>
+        <span class="page-dots">...</span>
+        <?php endif; ?>
+        <a href="?p=<?php echo $totalPages; ?>&filter=<?php echo $filter; ?>&search=<?php echo urlencode($search); ?>&date_from=<?php echo $date_from; ?>&date_to=<?php echo $date_to; ?>" 
+           class="page-link"><?php echo $totalPages; ?></a>
+        <?php endif; ?>
+        
+        <?php if ($page < $totalPages): ?>
+        <a href="?p=<?php echo $page + 1; ?>&filter=<?php echo $filter; ?>&search=<?php echo urlencode($search); ?>&date_from=<?php echo $date_from; ?>&date_to=<?php echo $date_to; ?>" 
+           class="page-link" title="Next page">
+            <i class="fas fa-chevron-right"></i>
+        </a>
+        <?php endif; ?>
+    </div>
 </div>
 <?php endif; ?>
 
@@ -499,20 +645,22 @@ require_once 'includes/header.php';
     <div class="modal-overlay" onclick="closePreviewModal()"></div>
     <div class="modal-container">
         <div class="modal-header">
-            <h3>Message Preview</h3>
+            <h3><i class="fas fa-envelope-open"></i> Message Preview</h3>
             <button class="close-modal" onclick="closePreviewModal()">&times;</button>
         </div>
         <div class="modal-body" id="previewContent">
-            <!-- Content will be loaded dynamically -->
+            <div class="loading-spinner">
+                <i class="fas fa-spinner fa-spin"></i> Loading...
+            </div>
         </div>
         <div class="modal-footer">
             <a href="#" id="previewViewLink" class="btn btn-primary">View Full Message</a>
             <a href="#" id="previewReplyLink" class="btn btn-success">Reply</a>
+            <button class="btn btn-outline" onclick="closePreviewModal()">Close</button>
         </div>
     </div>
 </div>
 
-<!-- Responsive Styles -->
 <style>
 /* ========================================
    RESPONSIVE STYLES FOR MESSAGES PAGE
@@ -545,7 +693,7 @@ require_once 'includes/header.php';
     margin-left: 10px;
 }
 
-/* Stats Grid - Desktop */
+/* Stats Grid */
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -561,7 +709,7 @@ require_once 'includes/header.php';
     align-items: center;
     gap: 15px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    transition: all 0.3s ease;
+    transition: transform 0.2s ease;
 }
 
 .stat-card:hover {
@@ -572,32 +720,23 @@ require_once 'includes/header.php';
 .stat-icon {
     width: 50px;
     height: 50px;
-    border-radius: 10px;
+    border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 1.5rem;
-    flex-shrink: 0;
 }
 
 .stat-icon.blue { background: rgba(37,99,235,0.1); color: #2563eb; }
-.stat-icon.green { background: rgba(16,185,129,0.1); color: #10b981; }
 .stat-icon.orange { background: rgba(245,158,11,0.1); color: #f59e0b; }
+.stat-icon.green { background: rgba(16,185,129,0.1); color: #10b981; }
 .stat-icon.purple { background: rgba(124,58,237,0.1); color: #7c3aed; }
 .stat-icon.teal { background: rgba(20,184,166,0.1); color: #14b8a6; }
-
-.stat-details {
-    flex: 1;
-    min-width: 0; /* Prevent text overflow */
-}
 
 .stat-details h3 {
     font-size: 0.9rem;
     color: var(--gray-600);
     margin-bottom: 5px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .stat-value {
@@ -606,17 +745,11 @@ require_once 'includes/header.php';
     color: var(--dark);
     line-height: 1.2;
     display: block;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .stat-label {
     font-size: 0.8rem;
     color: var(--gray-500);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 /* Source Distribution */
@@ -631,14 +764,9 @@ require_once 'includes/header.php';
 .source-distribution h3 {
     font-size: 1rem;
     margin-bottom: 15px;
-    color: var(--dark);
     display: flex;
     align-items: center;
     gap: 8px;
-}
-
-.source-distribution h3 i {
-    color: var(--primary);
 }
 
 .source-bars {
@@ -651,25 +779,17 @@ require_once 'includes/header.php';
     display: flex;
     align-items: center;
     gap: 15px;
-    flex-wrap: wrap;
 }
 
 .source-name {
-    width: 80px;
-    font-size: 0.9rem;
+    min-width: 80px;
     display: flex;
     align-items: center;
     gap: 5px;
 }
 
-.source-name i {
-    color: var(--primary);
-    width: 16px;
-}
-
 .source-bar-container {
     flex: 1;
-    min-width: 150px;
     height: 24px;
     background: var(--gray-200);
     border-radius: 12px;
@@ -692,8 +812,6 @@ require_once 'includes/header.php';
     color: white;
     font-size: 0.8rem;
     font-weight: 500;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.2);
-    white-space: nowrap;
 }
 
 /* Filter Bar */
@@ -718,7 +836,6 @@ require_once 'includes/header.php';
     background: var(--gray-100);
     padding: 3px;
     border-radius: 8px;
-    flex-wrap: wrap;
 }
 
 .filter-tab {
@@ -727,7 +844,7 @@ require_once 'includes/header.php';
     text-decoration: none;
     border-radius: 6px;
     font-size: 0.9rem;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     white-space: nowrap;
 }
 
@@ -750,7 +867,6 @@ require_once 'includes/header.php';
     top: 50%;
     transform: translateY(-50%);
     color: var(--gray-400);
-    font-size: 0.9rem;
 }
 
 .filter-search input {
@@ -759,20 +875,17 @@ require_once 'includes/header.php';
     border: 2px solid var(--gray-200);
     border-radius: 8px;
     font-size: 0.9rem;
-    transition: all 0.3s ease;
 }
 
 .filter-search input:focus {
     outline: none;
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
 }
 
 .filter-dates {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
 }
 
 .filter-dates input {
@@ -782,12 +895,53 @@ require_once 'includes/header.php';
     font-size: 0.9rem;
 }
 
-.filter-dates input:focus {
-    outline: none;
-    border-color: var(--primary);
+/* Mobile Filter */
+.mobile-filter-bar {
+    display: none;
+    gap: 10px;
+    margin-bottom: 15px;
 }
 
-/* Bulk Actions Bar */
+.mobile-filter-select {
+    flex: 1;
+    padding: 10px 12px;
+    border: 2px solid var(--gray-200);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    background: white;
+}
+
+.mobile-search-panel {
+    background: white;
+    border-radius: 12px;
+    padding: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.mobile-search-group {
+    margin-bottom: 10px;
+}
+
+.mobile-search-group input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 2px solid var(--gray-200);
+    border-radius: 8px;
+    font-size: 0.95rem;
+}
+
+.mobile-search-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.mobile-search-actions .btn {
+    flex: 1;
+}
+
+/* Bulk Actions */
 .bulk-actions-bar {
     display: flex;
     justify-content: space-between;
@@ -804,15 +958,13 @@ require_once 'includes/header.php';
     display: flex;
     gap: 10px;
     align-items: center;
-    flex-wrap: wrap;
 }
 
 .bulk-select {
     padding: 8px 12px;
     border: 2px solid var(--gray-200);
-    border-radius: 8px;
+    border-radius: 6px;
     min-width: 150px;
-    font-size: 0.9rem;
 }
 
 .selected-count {
@@ -825,19 +977,19 @@ require_once 'includes/header.php';
     color: var(--primary);
 }
 
-/* Table Container */
-.table-responsive {
+/* Desktop Table */
+.desktop-table {
     overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
     margin-bottom: 20px;
-    border-radius: 8px;
+    border-radius: 12px;
+    background: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
 }
 
-/* Messages Table */
 .messages-table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 900px; /* Ensures table doesn't squish on desktop */
+    min-width: 900px;
 }
 
 .messages-table th {
@@ -857,8 +1009,7 @@ require_once 'includes/header.php';
 }
 
 .messages-table tr.unread {
-    background: rgba(37, 99, 235, 0.03);
-    font-weight: 500;
+    background: rgba(37,99,235,0.03);
 }
 
 .messages-table tr:hover {
@@ -883,22 +1034,12 @@ require_once 'includes/header.php';
 }
 
 /* Contact Info */
-.contact-info {
-    max-width: 150px;
-}
-
 .contact-info .company-name {
     color: var(--gray-500);
     font-size: 0.75rem;
-    display: block;
-    margin-top: 2px;
 }
 
 /* Contact Details */
-.contact-details {
-    font-size: 0.85rem;
-}
-
 .email-link,
 .phone-link {
     color: var(--gray-600);
@@ -906,7 +1047,7 @@ require_once 'includes/header.php';
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    max-width: 150px;
+    font-size: 0.85rem;
 }
 
 .email-link:hover,
@@ -914,14 +1055,9 @@ require_once 'includes/header.php';
     color: var(--primary);
 }
 
-.email-link i,
-.phone-link i {
-    font-size: 0.8rem;
-    flex-shrink: 0;
-}
-
 .email-text,
 .phone-text {
+    max-width: 150px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -964,14 +1100,13 @@ require_once 'includes/header.php';
     color: var(--primary);
     cursor: pointer;
     opacity: 0;
-    transition: opacity 0.3s ease;
+    transition: opacity 0.2s ease;
     width: 24px;
     height: 24px;
     border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
 }
 
 tr:hover .preview-btn {
@@ -1016,8 +1151,7 @@ tr:hover .preview-btn {
     justify-content: center;
     color: var(--gray-600);
     text-decoration: none;
-    transition: all 0.3s ease;
-    flex-shrink: 0;
+    transition: all 0.2s ease;
 }
 
 .action-btn:hover {
@@ -1030,48 +1164,165 @@ tr:hover .preview-btn {
     background: var(--danger);
 }
 
-/* Empty State */
-.empty-state {
-    text-align: center;
-    padding: 60px 20px;
+/* Mobile Cards */
+.mobile-cards {
+    display: none;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.message-card {
+    background: white;
+    border-radius: 12px;
+    padding: 15px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    border-left: 4px solid transparent;
+}
+
+.message-card.unread {
+    border-left-color: var(--primary);
+    background: rgba(37,99,235,0.02);
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.card-checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.card-status {
+    margin-right: 5px;
+}
+
+.card-title {
+    flex: 1;
+    font-weight: 500;
+}
+
+.company-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--gray-200);
+    border-radius: 12px;
+    font-size: 0.7rem;
+    margin-left: 5px;
+    color: var(--gray-700);
+}
+
+.card-date {
     color: var(--gray-500);
+    font-size: 0.8rem;
 }
 
-.empty-state i {
-    font-size: 4rem;
-    margin-bottom: 15px;
-    color: var(--gray-400);
+.card-contact {
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
 }
 
-.empty-state h4 {
-    font-size: 1.2rem;
-    margin-bottom: 5px;
+.contact-link {
     color: var(--gray-600);
-}
-
-.empty-state p {
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 0.9rem;
 }
 
+.contact-link:hover {
+    color: var(--primary);
+}
+
+.card-subject {
+    margin-bottom: 8px;
+    font-size: 0.95rem;
+}
+
+.card-message {
+    color: var(--gray-600);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin-bottom: 10px;
+    padding: 10px;
+    background: var(--gray-100);
+    border-radius: 6px;
+}
+
+.card-time {
+    color: var(--gray-500);
+    font-size: 0.8rem;
+    margin-bottom: 10px;
+}
+
+.card-footer {
+    border-top: 1px solid var(--gray-200);
+    padding-top: 12px;
+}
+
+.card-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.card-actions .btn {
+    flex: 1;
+    min-width: 80px;
+    padding: 6px 8px;
+    font-size: 0.8rem;
+}
+
+.btn-outline-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+}
+
+.btn-outline-danger:hover {
+    background: var(--danger);
+    color: white;
+}
+
 /* Pagination */
+.pagination-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 25px;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.pagination-info {
+    color: var(--gray-600);
+    font-size: 0.9rem;
+}
+
 .pagination {
     display: flex;
-    justify-content: center;
     gap: 5px;
-    margin-top: 30px;
     flex-wrap: wrap;
 }
 
 .page-link {
-    padding: 8px 14px;
+    padding: 8px 12px;
     background: white;
     border: 1px solid var(--gray-200);
     border-radius: 6px;
-    color: var(--gray-600);
+    color: var(--gray-700);
     text-decoration: none;
-    transition: all 0.3s ease;
-    font-size: 0.9rem;
-    min-width: 40px;
+    transition: all 0.2s ease;
+    min-width: 36px;
     text-align: center;
 }
 
@@ -1080,6 +1331,32 @@ tr:hover .preview-btn {
     background: var(--primary);
     color: white;
     border-color: var(--primary);
+}
+
+.page-dots {
+    padding: 8px 4px;
+    color: var(--gray-500);
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+}
+
+.empty-state i {
+    font-size: 4rem;
+    color: var(--gray-300);
+    margin-bottom: 15px;
+}
+
+.empty-state h4 {
+    color: var(--gray-600);
+    margin-bottom: 5px;
+}
+
+.empty-state p {
+    color: var(--gray-500);
 }
 
 /* Modal */
@@ -1123,12 +1400,13 @@ tr:hover .preview-btn {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: linear-gradient(135deg, #f8fafc, #ffffff);
 }
 
 .modal-header h3 {
     margin: 0;
-    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .close-modal {
@@ -1137,17 +1415,10 @@ tr:hover .preview-btn {
     font-size: 1.5rem;
     cursor: pointer;
     color: var(--gray-500);
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
 }
 
 .close-modal:hover {
-    background: var(--danger);
-    color: white;
+    color: var(--danger);
 }
 
 .modal-body {
@@ -1165,35 +1436,37 @@ tr:hover .preview-btn {
     flex-wrap: wrap;
 }
 
+.loading-spinner {
+    text-align: center;
+    padding: 30px;
+    color: var(--gray-500);
+}
+
 /* Alert */
 .alert {
     padding: 15px 20px;
     border-radius: 8px;
     margin-bottom: 20px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 10px;
     animation: slideIn 0.3s ease;
 }
 
 .alert-success {
     background: rgba(16,185,129,0.1);
-    color: #0b5e42;
+    color: #065f46;
     border: 1px solid rgba(16,185,129,0.2);
 }
 
 .alert-close {
+    margin-left: auto;
     background: none;
     border: none;
     font-size: 1.2rem;
     cursor: pointer;
     color: inherit;
     opacity: 0.5;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
 }
 
 .alert-close:hover {
@@ -1216,16 +1489,20 @@ tr:hover .preview-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 5px;
     padding: 8px 16px;
-    border-radius: 8px;
+    border-radius: 6px;
     font-size: 0.9rem;
     font-weight: 500;
     text-decoration: none;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     border: none;
     cursor: pointer;
-    white-space: nowrap;
+}
+
+.btn-sm {
+    padding: 5px 12px;
+    font-size: 0.85rem;
 }
 
 .btn-primary {
@@ -1235,8 +1512,6 @@ tr:hover .preview-btn {
 
 .btn-primary:hover {
     background: #1d4ed8;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 10px rgba(37,99,235,0.2);
 }
 
 .btn-success {
@@ -1246,7 +1521,6 @@ tr:hover .preview-btn {
 
 .btn-success:hover {
     background: #0f9e6e;
-    transform: translateY(-2px);
 }
 
 .btn-outline {
@@ -1260,16 +1534,11 @@ tr:hover .preview-btn {
     color: white;
 }
 
-.btn-sm {
-    padding: 6px 12px;
-    font-size: 0.85rem;
-}
-
 /* ========================================
    RESPONSIVE BREAKPOINTS
    ======================================== */
 
-/* Tablet (768px - 1023px) */
+/* Tablet */
 @media (max-width: 1023px) {
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -1283,7 +1552,6 @@ tr:hover .preview-btn {
     
     .filter-tabs {
         justify-content: center;
-        width: 100%;
     }
     
     .filter-search {
@@ -1292,11 +1560,48 @@ tr:hover .preview-btn {
     
     .filter-dates {
         width: 100%;
-        justify-content: space-between;
     }
     
     .filter-dates input {
         flex: 1;
+    }
+}
+
+/* Mobile Landscape & Portrait */
+@media (max-width: 767px) {
+    .content-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+    
+    .header-actions .btn {
+        flex: 1;
+    }
+    
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .filter-bar {
+        display: none;
+    }
+    
+    .mobile-filter-bar {
+        display: flex;
+    }
+    
+    .desktop-table {
+        display: none;
+    }
+    
+    .mobile-cards {
+        display: flex;
     }
     
     .bulk-actions-bar {
@@ -1305,108 +1610,31 @@ tr:hover .preview-btn {
     }
     
     .bulk-select-wrapper {
-        justify-content: space-between;
+        width: 100%;
     }
     
     .bulk-select {
         flex: 1;
     }
     
-    .selected-count {
-        text-align: center;
+    .pagination-container {
+        flex-direction: column;
+        align-items: center;
     }
 }
 
-/* Mobile Landscape (576px - 767px) */
-@media (max-width: 767px) {
-    .content-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 15px;
-    }
-    
+/* Small Mobile */
+@media (max-width: 480px) {
     .header-actions {
-        width: 100%;
-        display: flex;
-        gap: 10px;
+        flex-direction: column;
     }
     
     .header-actions .btn {
-        flex: 1;
-        padding: 8px 12px;
-        font-size: 0.85rem;
-    }
-    
-    .stats-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .stat-card {
-        padding: 15px;
-    }
-    
-    .stat-icon {
-        width: 45px;
-        height: 45px;
-        font-size: 1.3rem;
-    }
-    
-    .stat-value {
-        font-size: 1.3rem;
-    }
-    
-    .source-distribution {
-        padding: 15px;
-    }
-    
-    .source-item {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 8px;
-    }
-    
-    .source-name {
-        width: auto;
-    }
-    
-    .source-bar-container {
         width: 100%;
     }
     
-    .filter-bar {
-        padding: 12px;
-    }
-    
-    .filter-dates {
-        flex-direction: column;
-    }
-    
-    .filter-dates input {
+    .card-actions .btn {
         width: 100%;
-    }
-    
-    .bulk-select-wrapper {
-        flex-direction: column;
-        align-items: stretch;
-    }
-    
-    .bulk-select {
-        width: 100%;
-    }
-    
-    .pagination {
-        gap: 3px;
-    }
-    
-    .page-link {
-        padding: 6px 10px;
-        font-size: 0.85rem;
-        min-width: 35px;
-    }
-    
-    .modal-container {
-        width: 95%;
-        max-height: 90vh;
     }
     
     .modal-footer {
@@ -1418,123 +1646,26 @@ tr:hover .preview-btn {
     }
 }
 
-/* Mobile Portrait (up to 575px) */
-@media (max-width: 575px) {
-    .content-header h2 {
-        font-size: 1.3rem;
-    }
-    
-    .header-badge {
-        display: inline-block;
-        margin-left: 0;
-        margin-top: 5px;
-    }
-    
-    .header-actions {
-        flex-direction: column;
-    }
-    
-    .header-actions .btn {
-        width: 100%;
-    }
-    
-    .filter-tabs {
-        justify-content: flex-start;
-        overflow-x: auto;
-        padding-bottom: 5px;
-    }
-    
-    .filter-tab {
-        padding: 6px 12px;
-        font-size: 0.8rem;
-    }
-    
-    .bulk-select {
-        min-width: 120px;
-    }
-    
-    .action-buttons {
-        justify-content: center;
-    }
-    
-    .action-btn {
-        width: 28px;
-        height: 28px;
-        font-size: 0.9rem;
-    }
-    
-    .date-info {
-        text-align: left;
-    }
-    
-    .date {
-        font-size: 0.85rem;
-    }
-    
-    .time {
-        font-size: 0.7rem;
-    }
-}
-
-/* Small Mobile (up to 375px) */
-@media (max-width: 375px) {
-    .stat-card {
-        flex-direction: column;
-        text-align: center;
-    }
-    
-    .stat-details h3,
-    .stat-value,
-    .stat-label {
-        white-space: normal;
-    }
-    
-    .bulk-select-wrapper {
-        gap: 5px;
-    }
-    
-    .bulk-select {
-        min-width: 100px;
-        font-size: 0.8rem;
-    }
-    
-    .btn-sm {
-        padding: 5px 10px;
-        font-size: 0.8rem;
-    }
-    
-    .pagination {
-        gap: 2px;
-    }
-    
-    .page-link {
-        padding: 5px 8px;
-        font-size: 0.8rem;
-        min-width: 30px;
-    }
-}
-
-/* Print Styles */
+/* Print */
 @media print {
     .header-actions,
     .filter-bar,
+    .mobile-filter-bar,
     .bulk-actions-bar,
     .action-buttons,
+    .card-actions,
     .pagination,
     .modal {
         display: none !important;
     }
     
-    .stats-grid {
-        break-inside: avoid;
+    .desktop-table {
+        display: block !important;
+        overflow: visible;
     }
     
-    .messages-table {
-        border: 1px solid #ddd;
-    }
-    
-    .messages-table th {
-        background: #f5f5f5;
+    .mobile-cards {
+        display: none !important;
     }
 }
 </style>
@@ -1543,57 +1674,71 @@ tr:hover .preview-btn {
 let selectedMessages = [];
 
 function toggleAll(source) {
-    const checkboxes = document.querySelectorAll('.select-item');
+    const checkboxes = document.querySelectorAll('.select-item, .select-item-mobile');
     checkboxes.forEach(cb => {
         cb.checked = source.checked;
+        if (source.checked) {
+            if (!selectedMessages.includes(cb.value)) {
+                selectedMessages.push(cb.value);
+            }
+        } else {
+            selectedMessages = [];
+        }
     });
     updateSelectedCount();
 }
 
-document.querySelectorAll('.select-item').forEach(cb => {
+document.querySelectorAll('.select-item, .select-item-mobile').forEach(cb => {
     cb.addEventListener('change', function() {
+        if (this.checked) {
+            selectedMessages.push(this.value);
+        } else {
+            selectedMessages = selectedMessages.filter(id => id !== this.value);
+        }
         updateSelectedCount();
         updateSelectAll();
     });
 });
 
 function updateSelectedCount() {
-    const checked = document.querySelectorAll('.select-item:checked').length;
     const countSpan = document.querySelector('#selectedCount span');
     if (countSpan) {
-        countSpan.textContent = checked;
+        countSpan.textContent = selectedMessages.length;
     }
 }
 
 function updateSelectAll() {
     const selectAll = document.getElementById('selectAll');
     if (selectAll) {
-        const total = document.querySelectorAll('.select-item').length;
-        const checked = document.querySelectorAll('.select-item:checked').length;
-        selectAll.checked = total === checked;
-        selectAll.indeterminate = checked > 0 && checked < total;
+        const total = document.querySelectorAll('.select-item, .select-item-mobile').length;
+        selectAll.checked = selectedMessages.length === total;
+        selectAll.indeterminate = selectedMessages.length > 0 && selectedMessages.length < total;
     }
 }
 
 function confirmBulkAction() {
     const action = document.querySelector('select[name="bulk_action"]').value;
-    const selected = document.querySelectorAll('.select-item:checked').length;
     
     if (!action) {
         alert('Please select an action');
         return false;
     }
     
-    if (selected === 0) {
+    if (selectedMessages.length === 0) {
         alert('Please select at least one message');
         return false;
     }
     
     if (action === 'delete') {
-        return confirm(`Are you sure you want to delete ${selected} message(s)?`);
+        return confirm(`Are you sure you want to delete ${selectedMessages.length} message(s)?`);
     }
     
     return true;
+}
+
+function toggleMobileSearch() {
+    const panel = document.getElementById('mobileSearchPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
 }
 
 function previewMessage(messageId) {
@@ -1624,12 +1769,14 @@ function previewMessage(messageId) {
                 replyLink.href = `mailto:${data.email}?subject=Re: ${encodeURIComponent(data.subject || 'Contact Form')}`;
                 
                 modal.style.display = 'block';
+                document.body.style.overflow = 'hidden';
             }
         });
 }
 
 function closePreviewModal() {
     document.getElementById('previewModal').style.display = 'none';
+    document.body.style.overflow = 'auto';
 }
 
 // Close modal when clicking overlay
@@ -1642,26 +1789,34 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-// Auto-refresh every 60 seconds (optional)
-// setTimeout(() => {
-//     location.reload();
-// }, 60000);
+// Auto-hide alerts after 5 seconds
+document.querySelectorAll('.alert').forEach(alert => {
+    setTimeout(() => {
+        alert.style.opacity = '0';
+        setTimeout(() => {
+            alert.style.display = 'none';
+        }, 300);
+    }, 5000);
+});
 
-// Responsive table handling
-function handleTableResponsive() {
-    const table = document.querySelector('.messages-table');
-    const container = document.querySelector('.table-responsive');
+// Handle responsive behavior
+function handleResponsive() {
+    const width = window.innerWidth;
+    const desktopTable = document.querySelector('.desktop-table');
+    const mobileCards = document.querySelector('.mobile-cards');
     
-    if (window.innerWidth < 768) {
-        // Mobile optimizations
-        document.querySelectorAll('.email-text').forEach(el => {
-            el.style.maxWidth = '100px';
-        });
+    if (width <= 767) {
+        if (desktopTable) desktopTable.style.display = 'none';
+        if (mobileCards) mobileCards.style.display = 'flex';
+    } else {
+        if (desktopTable) desktopTable.style.display = 'block';
+        if (mobileCards) mobileCards.style.display = 'none';
     }
 }
 
-window.addEventListener('load', handleTableResponsive);
-window.addEventListener('resize', handleTableResponsive);
+// Run on load and resize
+window.addEventListener('load', handleResponsive);
+window.addEventListener('resize', handleResponsive);
 </script>
 
 <?php

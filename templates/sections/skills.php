@@ -11,7 +11,7 @@ if (empty($skills)) {
 ?>
 
 <!-- Skills Section -->
-<section class="skills section">
+<section class="skills section" id="skills">
     <div class="container">
         <div class="section-header">
             <h2>My Skills</h2>

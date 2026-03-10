@@ -1,5 +1,5 @@
 <?php
-// blog.php - Blog Listing Page
+// blog.php - Blog Listing Page (FIXED)
 
 require_once 'includes/init.php';
 
@@ -99,7 +99,8 @@ require 'templates/layouts/header.php';
                         <article class="blog-card" data-aos="fade-up">
                             <?php if ($post['featured_image']): ?>
                             <div class="blog-image">
-                                <a href="blog/<?php echo $post['slug']; ?>">
+                                <!-- FIXED: Use proper URL structure -->
+                                <a href="<?php echo BASE_URL; ?>/index.php?url=blog/<?php echo $post['slug']; ?>">
                                     <img src="<?php echo UPLOAD_URL . 'blog/' . $post['featured_image']; ?>" 
                                          alt="<?php echo $post['title']; ?>">
                                 </a>
@@ -124,7 +125,8 @@ require 'templates/layouts/header.php';
                                 </div>
                                 
                                 <h2 class="blog-title">
-                                    <a href="blog/<?php echo $post['slug']; ?>">
+                                    <!-- FIXED: Use proper URL structure -->
+                                    <a href="<?php echo BASE_URL; ?>/index.php?url=blog/<?php echo $post['slug']; ?>">
                                         <?php echo $post['title']; ?>
                                     </a>
                                 </h2>
@@ -142,7 +144,8 @@ require 'templates/layouts/header.php';
                                         <i class="far fa-comment"></i>
                                         <?php echo $post['comment_count']; ?> comments
                                     </div>
-                                    <a href="blog/<?php echo $post['slug']; ?>" class="read-more">
+                                    <!-- FIXED: Use proper URL structure -->
+                                    <a href="<?php echo BASE_URL; ?>/index.php?url=blog/<?php echo $post['slug']; ?>" class="read-more">
                                         Read More <i class="fas fa-arrow-right"></i>
                                     </a>
                                 </div>
@@ -155,21 +158,21 @@ require 'templates/layouts/header.php';
                     <?php if ($totalPages > 1): ?>
                     <div class="pagination">
                         <?php if ($page > 1): ?>
-                        <a href="?page=<?php echo $page - 1; ?><?php echo $category ? '&category=' . $category : ''; ?>" 
+                        <a href="?page=<?php echo $page - 1; ?><?php echo $category ? '&category=' . $category : ''; ?><?php echo $tag ? '&tag=' . $tag : ''; ?>" 
                            class="page-link">
                             <i class="fas fa-chevron-left"></i>
                         </a>
                         <?php endif; ?>
                         
                         <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <a href="?page=<?php echo $i; ?><?php echo $category ? '&category=' . $category : ''; ?>" 
+                        <a href="?page=<?php echo $i; ?><?php echo $category ? '&category=' . $category : ''; ?><?php echo $tag ? '&tag=' . $tag : ''; ?>" 
                            class="page-link <?php echo $i === $page ? 'active' : ''; ?>">
                             <?php echo $i; ?>
                         </a>
                         <?php endfor; ?>
                         
                         <?php if ($page < $totalPages): ?>
-                        <a href="?page=<?php echo $page + 1; ?><?php echo $category ? '&category=' . $category : ''; ?>" 
+                        <a href="?page=<?php echo $page + 1; ?><?php echo $category ? '&category=' . $category : ''; ?><?php echo $tag ? '&tag=' . $tag : ''; ?>" 
                            class="page-link">
                             <i class="fas fa-chevron-right"></i>
                         </a>
@@ -184,7 +187,7 @@ require 'templates/layouts/header.php';
                 <!-- Search -->
                 <div class="sidebar-widget search-widget">
                     <h3>Search</h3>
-                    <form action="blog-search.php" method="GET">
+                    <form action="<?php echo BASE_URL; ?>/blog-search.php" method="GET">
                         <input type="text" name="q" placeholder="Search articles...">
                         <button type="submit"><i class="fas fa-search"></i></button>
                     </form>
@@ -196,7 +199,7 @@ require 'templates/layouts/header.php';
                     <ul>
                         <?php foreach ($categories as $cat): ?>
                         <li>
-                            <a href="?category=<?php echo $cat['id']; ?>">
+                            <a href="?category=<?php echo $cat['id']; ?><?php echo $tag ? '&tag=' . $tag : ''; ?>">
                                 <?php echo $cat['name']; ?>
                                 <span>(<?php echo $cat['post_count']; ?>)</span>
                             </a>
@@ -210,7 +213,7 @@ require 'templates/layouts/header.php';
                     <h3>Popular Tags</h3>
                     <div class="tag-cloud">
                         <?php foreach ($tags as $tag): ?>
-                        <a href="?tag=<?php echo $tag['slug']; ?>" class="tag-link">
+                        <a href="?tag=<?php echo $tag['slug']; ?><?php echo $category ? '&category=' . $category : ''; ?>" class="tag-link">
                             <?php echo $tag['name']; ?>
                         </a>
                         <?php endforeach; ?>
@@ -232,7 +235,8 @@ require 'templates/layouts/header.php';
                     <ul>
                         <?php foreach ($recent as $post): ?>
                         <li>
-                            <a href="blog/<?php echo $post['slug']; ?>">
+                            <!-- FIXED: Use proper URL structure -->
+                            <a href="<?php echo BASE_URL; ?>/index.php?url=blog/<?php echo $post['slug']; ?>">
                                 <?php if ($post['featured_image']): ?>
                                 <img src="<?php echo UPLOAD_URL . 'blog/' . $post['featured_image']; ?>" 
                                      alt="<?php echo $post['title']; ?>">
@@ -252,6 +256,7 @@ require 'templates/layouts/header.php';
 </section>
 
 <style>
+/* Your existing CSS remains the same */
 .blog-header {
     background: linear-gradient(135deg, var(--primary), var(--secondary));
     color: white;

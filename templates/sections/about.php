@@ -17,7 +17,7 @@ if ($bgImage) $sectionStyle .= "background-image: url('" . UPLOAD_URL . "section
 ?>
 
 <!-- About Section - Using your existing CSS classes -->
-<section id="<?php echo $section['section_key'] ?? 'about'; ?>" class="about section <?php echo $section['css_class'] ?? ''; ?>" style="<?php echo $sectionStyle; ?>">
+<section id="about" class="about section <?php echo $section['css_class'] ?? ''; ?>" style="<?php echo $sectionStyle; ?>">
     <div class="container">
         <div class="section-header">
             <span class="section-subtitle"><?php echo htmlspecialchars($subtitle); ?></span>

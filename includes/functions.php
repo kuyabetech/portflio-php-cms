@@ -55,9 +55,17 @@ function timeAgo($datetime) {
 }
 
 // Upload file
-function uploadFile($file, $directory = 'uploads/') {
-    $targetDir = UPLOAD_PATH . $directory;
+/**
+ * Upload file with type-specific paths
+ * @param array $file $_FILES array element
+ * @param string $type Upload type (profiles, settings, projects, testimonials, blog, sections, pages)
+ * @return array Result with success/filename or error
+ */
+function uploadFile($file, $type = '') {
+    // Get the correct upload path based on type
+    $targetDir = getUploadPath($type);
     
+    // Create directory if it doesn't exist
     if (!is_dir($targetDir)) {
         mkdir($targetDir, 0755, true);
     }
@@ -66,18 +74,25 @@ function uploadFile($file, $directory = 'uploads/') {
     $allowed = getAllowedExtensions();
     
     if (!in_array($extension, $allowed)) {
-        return ['error' => 'File type not allowed'];
+        return ['error' => 'File type not allowed. Allowed: ' . implode(', ', $allowed)];
     }
     
     if ($file['size'] > MAX_FILE_SIZE) {
-        return ['error' => 'File too large. Maximum size: 5MB'];
+        return ['error' => 'File too large. Maximum size: ' . (MAX_FILE_SIZE / 1024 / 1024) . 'MB'];
     }
     
+    // Generate unique filename
     $fileName = uniqid() . '_' . time() . '.' . $extension;
     $targetFile = $targetDir . $fileName;
     
     if (move_uploaded_file($file['tmp_name'], $targetFile)) {
-        return ['success' => true, 'filename' => $fileName];
+        return [
+            'success' => true, 
+            'filename' => $fileName,
+            'path' => $targetFile,
+            'url' => getUploadUrl($type) . $fileName,
+            'type' => $type
+        ];
     }
     
     return ['error' => 'Failed to upload file'];
@@ -241,6 +256,136 @@ function renderSEOMetaTags($pageUrl = null) {
     <meta name="title" content="<?php echo htmlspecialchars($title); ?>">
     <meta name="description" content="<?php echo htmlspecialchars($description); ?>">
     <?php
+}
+
+
+
+/**
+ * Get a single blog post by slug
+ * @param string $slug The post slug
+ * @return array|null Post data or null if not found
+ */
+function getBlogPost($slug) {
+    try {
+        return db()->fetch("
+            SELECT p.*, u.username as author_name,
+                   c.name as category_name, c.slug as category_slug
+            FROM blog_posts p
+            LEFT JOIN users u ON p.author_id = u.id
+            LEFT JOIN blog_categories c ON p.category_id = c.id
+            WHERE p.slug = ? AND p.status = 'published'
+        ", [$slug]);
+    } catch (Exception $e) {
+        error_log("Error in getBlogPost: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Get blog posts with pagination
+ * @param int $page Page number
+ * @param int $perPage Posts per page
+ * @return array Array of blog posts
+ */
+function getBlogPosts($page = 1, $perPage = 10) {
+    try {
+        $offset = ($page - 1) * $perPage;
+        return db()->fetchAll("
+            SELECT p.*, u.username as author_name,
+                   c.name as category_name,
+                   (SELECT COUNT(*) FROM blog_comments WHERE post_id = p.id AND is_approved = 1) as comment_count
+            FROM blog_posts p
+            LEFT JOIN users u ON p.author_id = u.id
+            LEFT JOIN blog_categories c ON p.category_id = c.id
+            WHERE p.status = 'published'
+            ORDER BY p.published_at DESC
+            LIMIT ? OFFSET ?
+        ", [$perPage, $offset]);
+    } catch (Exception $e) {
+        error_log("Error in getBlogPosts: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Get total count of published blog posts
+ * @return int Total posts count
+ */
+function getTotalBlogPosts() {
+    try {
+        $result = db()->fetch("SELECT COUNT(*) as count FROM blog_posts WHERE status = 'published'");
+        return $result['count'] ?? 0;
+    } catch (Exception $e) {
+        error_log("Error in getTotalBlogPosts: " . $e->getMessage());
+        return 0;
+    }
+}
+
+/**
+ * Get blog posts by category
+ * @param int $categoryId Category ID
+ * @param int $limit Number of posts to return
+ * @return array Array of blog posts
+ */
+function getBlogPostsByCategory($categoryId, $limit = 5) {
+    try {
+        return db()->fetchAll("
+            SELECT p.*, u.username as author_name
+            FROM blog_posts p
+            LEFT JOIN users u ON p.author_id = u.id
+            WHERE p.category_id = ? AND p.status = 'published'
+            ORDER BY p.published_at DESC
+            LIMIT ?
+        ", [$categoryId, $limit]);
+    } catch (Exception $e) {
+        error_log("Error in getBlogPostsByCategory: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Get blog posts by tag
+ * @param string $tagSlug Tag slug
+ * @param int $limit Number of posts to return
+ * @return array Array of blog posts
+ */
+function getBlogPostsByTag($tagSlug, $limit = 5) {
+    try {
+        return db()->fetchAll("
+            SELECT p.*, u.username as author_name
+            FROM blog_posts p
+            JOIN blog_post_tags pt ON p.id = pt.post_id
+            JOIN blog_tags t ON pt.tag_id = t.id
+            WHERE t.slug = ? AND p.status = 'published'
+            ORDER BY p.published_at DESC
+            LIMIT ?
+        ", [$tagSlug, $limit]);
+    } catch (Exception $e) {
+        error_log("Error in getBlogPostsByTag: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Get related blog posts
+ * @param int $postId Current post ID
+ * @param int $categoryId Category ID
+ * @param int $limit Number of related posts
+ * @return array Array of related posts
+ */
+function getRelatedBlogPosts($postId, $categoryId, $limit = 3) {
+    try {
+        return db()->fetchAll("
+            SELECT title, slug, published_at, featured_image 
+            FROM blog_posts 
+            WHERE status = 'published' AND id != ? AND category_id = ?
+            ORDER BY published_at DESC 
+            LIMIT ?
+        ", [$postId, $categoryId, $limit]);
+    } catch (Exception $e) {
+        error_log("Error in getRelatedBlogPosts: " . $e->getMessage());
+        return [];
+    }
 }
 ?>
 

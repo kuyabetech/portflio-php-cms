@@ -21,6 +21,7 @@ if (!class_exists('Auth')) {
     require_once __DIR__ . '/auth.php';
 }
 
+require_once "mailer.php";
 // Turn error reporting back on
 error_reporting(E_ALL);
 ?>

@@ -1,169 +1,290 @@
 <?php
 // includes/mailer.php
-// Email handling class
+// Central PHPMailer Configuration - USE THIS EVERYWHERE
 
+// Load PHPMailer if using Composer
+require_once __DIR__ . '/../vendor/autoload.php';
+
+// If not using Composer, use manual includes:
+// require_once __DIR__ . '/vendor/PHPMailer/src/Exception.php';
+// require_once __DIR__ . '/vendor/PHPMailer/src/PHPMailer.php';
+// require_once __DIR__ . '/vendor/PHPMailer/src/SMTP.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+use PHPMailer\PHPMailer\SMTP;
+
+/**
+ * Central Mailer Class
+ * Handles all email sending with settings from database
+ */
 class Mailer {
-    private $config;
+    private static $instance = null;
+    private $mailer;
+    private $settings = [];
     
-    public function __construct() {
-        $this->config = [
-            'smtp_host' => getSetting('smtp_host'),
-            'smtp_port' => getSetting('smtp_port'),
-            'smtp_user' => getSetting('smtp_username'),
-            'smtp_pass' => getSetting('smtp_password'),
-            'smtp_encryption' => getSetting('smtp_encryption', 'tls'),
-            'from_email' => getSetting('contact_email'),
-            'from_name' => SITE_NAME
-        ];
+    /**
+     * Private constructor (singleton pattern)
+     */
+    private function __construct() {
+        $this->loadSettings();
+        $this->initializeMailer();
     }
     
     /**
-     * Queue an email for sending
+     * Get singleton instance
      */
-    public function queue($to, $subject, $body, $templateKey = null, $priority = 'normal', $scheduledAt = null) {
-        $data = [
-            'to_email' => is_array($to) ? $to['email'] : $to,
-            'to_name' => is_array($to) ? ($to['name'] ?? null) : null,
-            'subject' => $subject,
-            'body' => $body,
-            'template_key' => $templateKey,
-            'priority' => $priority,
-            'status' => 'pending',
-            'scheduled_at' => $scheduledAt
-        ];
-        
-        return db()->insert('email_queue', $data);
-    }
-    
-    /**
-     * Send email immediately using template
-     */
-    public function sendTemplate($templateKey, $to, $variables = []) {
-        // Get template
-        $template = db()->fetch("SELECT * FROM email_templates WHERE template_key = ? AND is_active = 1", [$templateKey]);
-        if (!$template) {
-            error_log("Email template not found: $templateKey");
-            return false;
+    public static function getInstance() {
+        if (self::$instance === null) {
+            self::$instance = new self();
         }
-        
-        // Prepare variables
-        $variables = array_merge($this->getGlobalVariables(), $variables);
-        
-        // Replace variables in subject and body
-        $subject = $this->replaceVariables($template['subject'], $variables);
-        $body = $this->replaceVariables($template['body'], $variables);
-        
-        // Queue or send based on settings
-        if (getSetting('queue_emails', '0') == '1') {
-            return $this->queue($to, $subject, $body, $templateKey);
-        } else {
-            return $this->sendNow($to, $subject, $body);
+        return self::$instance;
+    }
+    
+    /**
+     * Load SMTP settings from database
+     */
+    private function loadSettings() {
+        try {
+            // Load from database
+            $this->settings = [
+                'smtp_host' => getSetting('smtp_host', ''),
+                'smtp_port' => (int)getSetting('smtp_port', 587),
+                'smtp_encryption' => getSetting('smtp_encryption', 'tls'),
+                'smtp_username' => getSetting('smtp_username', ''),
+                'smtp_password' => getSetting('smtp_password', ''),
+                'smtp_from_email' => getSetting('smtp_from_email', getSetting('contact_email', 'noreply@' . $_SERVER['HTTP_HOST'])),
+                'smtp_from_name' => getSetting('site_name', SITE_NAME),
+                'smtp_reply_to' => getSetting('contact_email', ''),
+                'smtp_debug' => (defined('DEV_MODE') && DEV_MODE) ? 2 : 0 // 0=off, 1=client, 2=client+server
+            ];
+        } catch (Exception $e) {
+            error_log("Mailer: Failed to load settings - " . $e->getMessage());
+            // Fallback to defaults
+            $this->settings = [
+                'smtp_host' => '',
+                'smtp_port' => 587,
+                'smtp_encryption' => 'tls',
+                'smtp_username' => '',
+                'smtp_password' => '',
+                'smtp_from_email' => 'noreply@' . $_SERVER['HTTP_HOST'],
+                'smtp_from_name' => SITE_NAME,
+                'smtp_reply_to' => '',
+                'smtp_debug' => 0
+            ];
         }
     }
     
     /**
-     * Send email immediately
+     * Initialize PHPMailer with settings
      */
-    public function sendNow($to, $subject, $body, $attachments = []) {
-        $toEmail = is_array($to) ? $to['email'] : $to;
-        $toName = is_array($to) ? ($to['name'] ?? '') : '';
+    private function initializeMailer() {
+        $this->mailer = new PHPMailer(true);
         
-        // Prepare headers
-        $headers = "MIME-Version: 1.0\r\n";
-        $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
-        $headers .= "From: " . $this->config['from_name'] . " <" . $this->config['from_email'] . ">\r\n";
-        
-        if ($toName) {
-            $headers .= "Reply-To: " . $this->config['from_email'] . "\r\n";
-            $headers .= "X-Mailer: PHP/" . phpversion();
-        }
-        
-        // Use SMTP if configured
-        if (!empty($this->config['smtp_host'])) {
-            return $this->sendSMTP($toEmail, $subject, $body, $headers);
-        } else {
-            // Use PHP mail function
-            return mail($toEmail, $subject, $body, $headers);
-        }
-    }
-    
-    /**
-     * Send via SMTP
-     */
-    private function sendSMTP($to, $subject, $body, $headers) {
-        // Implement SMTP sending here
-        // For now, fall back to mail()
-        return mail($to, $subject, $body, $headers);
-    }
-    
-    /**
-     * Process email queue (call from cron)
-     */
-    public function processQueue($limit = 50) {
-        $emails = db()->fetchAll("
-            SELECT * FROM email_queue 
-            WHERE status = 'pending' 
-            AND (scheduled_at IS NULL OR scheduled_at <= NOW())
-            ORDER BY 
-                CASE priority 
-                    WHEN 'high' THEN 1 
-                    WHEN 'normal' THEN 2 
-                    WHEN 'low' THEN 3 
-                END,
-                created_at ASC
-            LIMIT ?
-        ", [$limit]);
-        
-        $processed = 0;
-        foreach ($emails as $email) {
-            $success = $this->sendNow(
-                ['email' => $email['to_email'], 'name' => $email['to_name']],
-                $email['subject'],
-                $email['body']
+        try {
+            // Server settings
+            if (!empty($this->settings['smtp_host'])) {
+                // Use SMTP
+                $this->mailer->isSMTP();
+                $this->mailer->Host = $this->settings['smtp_host'];
+                $this->mailer->Port = $this->settings['smtp_port'];
+                
+                // Encryption
+                if (!empty($this->settings['smtp_encryption']) && $this->settings['smtp_encryption'] !== 'none') {
+                    $this->mailer->SMTPSecure = $this->settings['smtp_encryption'];
+                }
+                
+                // Authentication
+                if (!empty($this->settings['smtp_username']) && !empty($this->settings['smtp_password'])) {
+                    $this->mailer->SMTPAuth = true;
+                    $this->mailer->Username = $this->settings['smtp_username'];
+                    $this->mailer->Password = $this->settings['smtp_password'];
+                }
+                
+                // Debug mode
+                if ($this->settings['smtp_debug'] > 0) {
+                    $this->mailer->SMTPDebug = $this->settings['smtp_debug'];
+                }
+            } else {
+                // Use PHP mail() as fallback
+                $this->mailer->isMail();
+            }
+            
+            // Default settings
+            $this->mailer->CharSet = 'UTF-8';
+            $this->mailer->Encoding = 'base64';
+            
+            // Default sender
+            $this->mailer->setFrom(
+                $this->settings['smtp_from_email'],
+                $this->settings['smtp_from_name']
             );
             
-            $status = $success ? 'sent' : 'failed';
-            $errorMessage = $success ? null : 'Failed to send';
+            // Default reply-to
+            if (!empty($this->settings['smtp_reply_to'])) {
+                $this->mailer->addReplyTo(
+                    $this->settings['smtp_reply_to'],
+                    $this->settings['smtp_from_name']
+                );
+            }
             
-            // Update queue
-            db()->update('email_queue', [
-                'status' => $status,
-                'attempts' => $email['attempts'] + 1,
-                'error_message' => $errorMessage,
-                'sent_at' => $success ? date('Y-m-d H:i:s') : null
-            ], 'id = :id', ['id' => $email['id']]);
-            
-            // Log
-            db()->insert('email_logs', [
-                'email_queue_id' => $email['id'],
-                'template_key' => $email['template_key'],
-                'to_email' => $email['to_email'],
-                'subject' => $email['subject'],
-                'status' => $status,
-                'error_message' => $errorMessage
-            ]);
-            
-            if ($success) $processed++;
+        } catch (Exception $e) {
+            error_log("Mailer initialization error: " . $e->getMessage());
         }
-        
-        return $processed;
     }
     
     /**
-     * Get global variables for email templates
+     * Send an email
      */
-    private function getGlobalVariables() {
-        return [
-            'site_name' => SITE_NAME,
-            'site_url' => BASE_URL,
-            'year' => date('Y'),
-            'primary_color' => getSetting('primary_color', '#2563eb'),
-            'secondary_color' => getSetting('secondary_color', '#7c3aed'),
-            'contact_email' => getSetting('contact_email'),
-            'contact_phone' => getSetting('contact_phone'),
-            'server_name' => $_SERVER['SERVER_NAME'] ?? 'localhost',
-            'php_version' => phpversion()
-        ];
+    public function send($to, $subject, $body, $options = []) {
+        try {
+            // Reset recipients
+            $this->mailer->clearAddresses();
+            $this->mailer->clearCCs();
+            $this->mailer->clearBCCs();
+            $this->mailer->clearAttachments();
+            $this->mailer->clearReplyTos();
+            
+            // Set recipients
+            if (is_array($to)) {
+                foreach ($to as $recipient) {
+                    if (is_array($recipient)) {
+                        $this->mailer->addAddress($recipient['email'], $recipient['name'] ?? '');
+                    } else {
+                        $this->mailer->addAddress($recipient);
+                    }
+                }
+            } else {
+                $this->mailer->addAddress($to);
+            }
+            
+            // Set subject
+            $this->mailer->Subject = $subject;
+            
+            // Set body
+            if (!empty($options['is_html'])) {
+                $this->mailer->isHTML(true);
+                $this->mailer->Body = $body;
+                if (!empty($options['alt_body'])) {
+                    $this->mailer->AltBody = $options['alt_body'];
+                }
+            } else {
+                $this->mailer->isHTML(false);
+                $this->mailer->Body = $body;
+            }
+            
+            // Add CC
+            if (!empty($options['cc'])) {
+                if (is_array($options['cc'])) {
+                    foreach ($options['cc'] as $cc) {
+                        $this->mailer->addCC($cc);
+                    }
+                } else {
+                    $this->mailer->addCC($options['cc']);
+                }
+            }
+            
+            // Add BCC
+            if (!empty($options['bcc'])) {
+                if (is_array($options['bcc'])) {
+                    foreach ($options['bcc'] as $bcc) {
+                        $this->mailer->addBCC($bcc);
+                    }
+                } else {
+                    $this->mailer->addBCC($options['bcc']);
+                }
+            }
+            
+            // Add Reply-To
+            if (!empty($options['reply_to'])) {
+                if (is_array($options['reply_to'])) {
+                    $this->mailer->addReplyTo($options['reply_to']['email'], $options['reply_to']['name'] ?? '');
+                } else {
+                    $this->mailer->addReplyTo($options['reply_to']);
+                }
+            }
+            
+            // Add attachments
+            if (!empty($options['attachments'])) {
+                foreach ($options['attachments'] as $attachment) {
+                    if (is_array($attachment)) {
+                        $this->mailer->addAttachment(
+                            $attachment['path'],
+                            $attachment['name'] ?? '',
+                            $attachment['encoding'] ?? 'base64',
+                            $attachment['type'] ?? ''
+                        );
+                    } else {
+                        $this->mailer->addAttachment($attachment);
+                    }
+                }
+            }
+            
+            // Send
+            $result = $this->mailer->send();
+            
+            if ($result) {
+                error_log("Mail sent successfully to: " . (is_array($to) ? json_encode($to) : $to));
+                return true;
+            }
+            
+            return false;
+            
+        } catch (Exception $e) {
+            error_log("Mailer error: " . $this->mailer->ErrorInfo);
+            return false;
+        }
+    }
+    
+    /**
+     * Send HTML email
+     */
+    public function sendHTML($to, $subject, $htmlBody, $textBody = '', $options = []) {
+        $options['is_html'] = true;
+        $options['alt_body'] = $textBody ?: strip_tags($htmlBody);
+        return $this->send($to, $subject, $htmlBody, $options);
+    }
+    
+    /**
+     * Send email using template
+     */
+    public function sendTemplate($to, $templateKey, $variables = [], $options = []) {
+        try {
+            // Get template from database
+            $template = db()->fetch(
+                "SELECT * FROM email_templates WHERE template_key = ? AND is_active = 1",
+                [$templateKey]
+            );
+            
+            if (!$template) {
+                error_log("Mailer: Template not found - $templateKey");
+                return false;
+            }
+            
+            // Replace variables in subject and body
+            $subject = $this->replaceVariables($template['subject'], $variables);
+            $body = $this->replaceVariables($template['body'], $variables);
+            
+            // Add global variables
+            $globalVars = [
+                'site_name' => SITE_NAME,
+                'site_url' => BASE_URL,
+                'year' => date('Y'),
+                'date' => date('F j, Y'),
+                'time' => date('h:i A')
+            ];
+            
+            $subject = $this->replaceVariables($subject, $globalVars);
+            $body = $this->replaceVariables($body, $globalVars);
+            
+            // Send as HTML
+            $options['is_html'] = true;
+            return $this->send($to, $subject, $body, $options);
+            
+        } catch (Exception $e) {
+            error_log("Mailer template error: " . $e->getMessage());
+            return false;
+        }
     }
     
     /**
@@ -177,37 +298,28 @@ class Mailer {
     }
     
     /**
-     * Send test email
+     * Test SMTP connection
      */
-    public function sendTest($to) {
-        return $this->sendTemplate('test_email', $to, [
-            'sent_time' => date('Y-m-d H:i:s')
-        ]);
+    public function testConnection() {
+        try {
+            $this->mailer->smtpConnect();
+            return ['success' => true, 'message' => 'SMTP connection successful'];
+        } catch (Exception $e) {
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
     }
     
     /**
-     * Get email statistics
+     * Get mailer instance for advanced usage
      */
-    public function getStats($days = 30) {
-        return db()->fetch("
-            SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                COUNT(DISTINCT template_key) as templates_used
-            FROM email_queue 
-            WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
-        ", [$days]);
+    public function getPHPMailer() {
+        return $this->mailer;
     }
 }
 
-// Global mailer function
+/**
+ * Global helper function to get Mailer instance
+ */
 function mailer() {
-    static $mailer = null;
-    if ($mailer === null) {
-        $mailer = new Mailer();
-    }
-    return $mailer;
+    return Mailer::getInstance();
 }
-?>

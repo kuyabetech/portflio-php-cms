@@ -1,6 +1,6 @@
 <?php
 // admin/settings.php
-// Site Settings Management with Default Colors
+// Site Settings Management with SMTP Configuration
 
 require_once dirname(__DIR__) . '/includes/init.php';
 Auth::requireAuth();
@@ -26,7 +26,7 @@ $defaultColors = [
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     foreach ($_POST as $key => $value) {
-        if ($key !== 'submit' && $key !== 'reset_colors') {
+        if ($key !== 'submit' && $key !== 'reset_colors' && $key !== 'test_smtp') {
             $value = sanitize($value);
             // Check if setting exists
             $exists = db()->fetch("SELECT id FROM site_settings WHERE setting_key = ?", [$key]);
@@ -50,14 +50,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
+    // Handle test SMTP
+    if (isset($_POST['test_smtp'])) {
+        // This will be handled by AJAX separately
+    }
+    
     // Handle logo upload
     if (isset($_FILES['site_logo']) && $_FILES['site_logo']['error'] === UPLOAD_ERR_OK) {
         $upload = uploadFile($_FILES['site_logo'], 'settings/');
         if (isset($upload['success'])) {
             // Delete old logo
             $oldLogo = getSetting('site_logo');
-            if ($oldLogo && file_exists(UPLOAD_PATH . 'settings/' . $oldLogo)) {
-                unlink(UPLOAD_PATH . 'settings/' . $oldLogo);
+            if ($oldLogo && file_exists(UPLOAD_PATH_SETTINGS . $oldLogo)) {
+                unlink(UPLOAD_PATH_SETTINGS . $oldLogo);
             }
             
             $exists = db()->fetch("SELECT id FROM site_settings WHERE setting_key = 'site_logo'");
@@ -75,8 +80,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($upload['success'])) {
             // Delete old favicon
             $oldFavicon = getSetting('favicon');
-            if ($oldFavicon && file_exists(UPLOAD_PATH . 'settings/' . $oldFavicon)) {
-                unlink(UPLOAD_PATH . 'settings/' . $oldFavicon);
+            if ($oldFavicon && file_exists(UPLOAD_PATH_SETTINGS . $oldFavicon)) {
+                unlink(UPLOAD_PATH_SETTINGS . $oldFavicon);
             }
             
             $exists = db()->fetch("SELECT id FROM site_settings WHERE setting_key = 'favicon'");
@@ -88,7 +93,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    header('Location: settings.php?msg=updated');
+    $_SESSION['flash'] = ['type' => 'success', 'message' => 'Settings updated successfully!'];
+    header('Location: settings.php');
     exit;
 }
 
@@ -101,6 +107,24 @@ foreach ($result as $row) {
 
 // Merge with defaults for missing settings
 foreach ($defaultColors as $key => $value) {
+    if (!isset($settings[$key])) {
+        $settings[$key] = $value;
+    }
+}
+
+// Set default SMTP values if not set
+$smtpDefaults = [
+    'smtp_host' => '',
+    'smtp_port' => '587',
+    'smtp_encryption' => 'tls',
+    'smtp_username' => '',
+    'smtp_password' => '',
+    'smtp_from_email' => getSetting('contact_email', ''),
+    'smtp_from_name' => SITE_NAME,
+    'smtp_reply_to' => ''
+];
+
+foreach ($smtpDefaults as $key => $value) {
     if (!isset($settings[$key])) {
         $settings[$key] = $value;
     }
@@ -121,14 +145,17 @@ require_once 'includes/header.php';
     </div>
 </div>
 
-<?php if (isset($_GET['msg']) && $_GET['msg'] === 'updated'): ?>
-    <div class="alert alert-success">
-        <i class="fas fa-check-circle"></i>
-        Settings updated successfully!
+<!-- Flash Messages -->
+<?php if (isset($_SESSION['flash'])): ?>
+    <div class="alert alert-<?php echo $_SESSION['flash']['type']; ?> alert-dismissible">
+        <i class="fas <?php echo $_SESSION['flash']['type'] === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'; ?>"></i>
+        <?php echo $_SESSION['flash']['message']; ?>
+        <button type="button" class="alert-close" onclick="this.parentElement.remove()">&times;</button>
     </div>
+    <?php unset($_SESSION['flash']); ?>
 <?php endif; ?>
 
-<form method="POST" enctype="multipart/form-data" class="settings-form">
+<form method="POST" enctype="multipart/form-data" class="settings-form" id="settingsForm">
     <!-- General Settings -->
     <div class="settings-section">
         <div class="section-header">
@@ -201,7 +228,7 @@ require_once 'includes/header.php';
                 </div>
                 <?php if (!empty($settings['site_logo'])): ?>
                 <div class="current-image">
-                    <img src="<?php echo UPLOAD_URL . 'settings/' . $settings['site_logo']; ?>" 
+                    <img src="<?php echo UPLOAD_URL_SETTINGS . $settings['site_logo']; ?>" 
                          alt="Site Logo">
                     <p>Current logo</p>
                 </div>
@@ -222,7 +249,7 @@ require_once 'includes/header.php';
                 </div>
                 <?php if (!empty($settings['favicon'])): ?>
                 <div class="current-image">
-                    <img src="<?php echo UPLOAD_URL . 'settings/' . $settings['favicon']; ?>" 
+                    <img src="<?php echo UPLOAD_URL_SETTINGS . $settings['favicon']; ?>" 
                          alt="Favicon" style="max-width: 32px;">
                     <p>Current favicon</p>
                 </div>
@@ -448,7 +475,7 @@ require_once 'includes/header.php';
         <div class="form-group checkbox">
             <label class="checkbox-label">
                 <input type="checkbox" name="newsletter_enabled" value="1" 
-                       <?php echo getSetting('newsletter_enabled', '1') == '1' ? 'checked' : ''; ?>>
+                       <?php echo (isset($settings['newsletter_enabled']) && $settings['newsletter_enabled'] == '1') ? 'checked' : ''; ?>>
                 <span class="checkbox-text">Enable Newsletter Signup</span>
             </label>
         </div>
@@ -456,7 +483,7 @@ require_once 'includes/header.php';
         <div class="form-group">
             <label for="mailchimp_api_key">Mailchimp API Key</label>
             <input type="text" id="mailchimp_api_key" name="mailchimp_api_key" 
-                   value="<?php echo htmlspecialchars(getSetting('mailchimp_api_key', '')); ?>"
+                   value="<?php echo htmlspecialchars($settings['mailchimp_api_key'] ?? ''); ?>"
                    placeholder="Enter your Mailchimp API key">
             <small>Optional - for advanced email marketing</small>
         </div>
@@ -464,7 +491,7 @@ require_once 'includes/header.php';
         <div class="form-group">
             <label for="mailchimp_list_id">Mailchimp List ID</label>
             <input type="text" id="mailchimp_list_id" name="mailchimp_list_id" 
-                   value="<?php echo htmlspecialchars(getSetting('mailchimp_list_id', '')); ?>"
+                   value="<?php echo htmlspecialchars($settings['mailchimp_list_id'] ?? ''); ?>"
                    placeholder="Enter your Mailchimp list ID">
         </div>
     </div>
@@ -497,11 +524,11 @@ require_once 'includes/header.php';
         </div>
     </div>
     
-    <!-- Email Settings -->
+    <!-- Email Settings (SMTP) -->
     <div class="settings-section">
         <div class="section-header">
             <i class="fas fa-envelope-open-text"></i>
-            <h3>Email Settings</h3>
+            <h3>SMTP Email Settings</h3>
         </div>
         
         <div class="form-row">
@@ -513,6 +540,7 @@ require_once 'includes/header.php';
                 <input type="text" id="smtp_host" name="smtp_host" 
                        value="<?php echo htmlspecialchars($settings['smtp_host'] ?? ''); ?>"
                        placeholder="smtp.gmail.com">
+                <small>Your SMTP server address</small>
             </div>
             
             <div class="form-group">
@@ -544,7 +572,8 @@ require_once 'includes/header.php';
                 </label>
                 <input type="password" id="smtp_password" name="smtp_password" 
                        value="<?php echo htmlspecialchars($settings['smtp_password'] ?? ''); ?>"
-                       placeholder="Your SMTP password">
+                       placeholder="Your SMTP password or app password">
+                <small>For Gmail, use an <a href="https://support.google.com/accounts/answer/185833" target="_blank">App Password</a></small>
             </div>
         </div>
         
@@ -555,9 +584,9 @@ require_once 'includes/header.php';
                     Encryption
                 </label>
                 <select id="smtp_encryption" name="smtp_encryption">
-                    <option value="tls" <?php echo ($settings['smtp_encryption'] ?? '') === 'tls' ? 'selected' : ''; ?>>TLS</option>
-                    <option value="ssl" <?php echo ($settings['smtp_encryption'] ?? '') === 'ssl' ? 'selected' : ''; ?>>SSL</option>
-                    <option value="none" <?php echo ($settings['smtp_encryption'] ?? '') === 'none' ? 'selected' : ''; ?>>None</option>
+                    <option value="tls" <?php echo (isset($settings['smtp_encryption']) && $settings['smtp_encryption'] === 'tls') ? 'selected' : ''; ?>>TLS (recommended)</option>
+                    <option value="ssl" <?php echo (isset($settings['smtp_encryption']) && $settings['smtp_encryption'] === 'ssl') ? 'selected' : ''; ?>>SSL</option>
+                    <option value="none" <?php echo (isset($settings['smtp_encryption']) && $settings['smtp_encryption'] === 'none') ? 'selected' : ''; ?>>None</option>
                 </select>
             </div>
             
@@ -567,9 +596,41 @@ require_once 'includes/header.php';
                     From Email
                 </label>
                 <input type="email" id="smtp_from_email" name="smtp_from_email" 
-                       value="<?php echo htmlspecialchars($settings['smtp_from_email'] ?? ''); ?>"
-                       placeholder="noreply@example.com">
+                       value="<?php echo htmlspecialchars($settings['smtp_from_email'] ?? $settings['contact_email'] ?? ''); ?>"
+                       placeholder="noreply@yourdomain.com">
+                <small>Email address that emails will come from</small>
             </div>
+        </div>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_from_name">
+                    <i class="fas fa-tag"></i>
+                    From Name
+                </label>
+                <input type="text" id="smtp_from_name" name="smtp_from_name" 
+                       value="<?php echo htmlspecialchars($settings['smtp_from_name'] ?? SITE_NAME); ?>"
+                       placeholder="<?php echo SITE_NAME; ?>">
+                <small>Name that appears in the From field</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="smtp_reply_to">
+                    <i class="fas fa-reply"></i>
+                    Reply-To Email
+                </label>
+                <input type="email" id="smtp_reply_to" name="smtp_reply_to" 
+                       value="<?php echo htmlspecialchars($settings['smtp_reply_to'] ?? ''); ?>"
+                       placeholder="contact@yourdomain.com">
+                <small>Optional: replies will go to this address</small>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <button type="button" class="btn btn-outline" onclick="testSMTP()" id="testSMTPBtn">
+                <i class="fas fa-vial"></i> Test SMTP Connection
+            </button>
+            <div id="smtpTestResult" style="margin-top: 15px;"></div>
         </div>
     </div>
     
@@ -596,7 +657,7 @@ require_once 'includes/header.php';
     </div>
     
     <div class="form-actions">
-        <button type="submit" name="submit" class="btn btn-primary">
+        <button type="submit" name="submit" class="btn btn-primary btn-lg">
             <i class="fas fa-save"></i>
             Save All Settings
         </button>
@@ -606,6 +667,26 @@ require_once 'includes/header.php';
         </button>
     </div>
 </form>
+
+<!-- SMTP Test Result Modal -->
+<div class="modal" id="smtpTestModal" style="display: none;">
+    <div class="modal-overlay" onclick="closeSMTPModal()"></div>
+    <div class="modal-container" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3>SMTP Test Result</h3>
+            <button class="close-modal" onclick="closeSMTPModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="smtpTestModalBody">
+            <div class="text-center">
+                <i class="fas fa-spinner fa-spin fa-3x"></i>
+                <p>Testing connection...</p>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" onclick="closeSMTPModal()">Close</button>
+        </div>
+    </div>
+</div>
 
 <style>
 /* Settings Section Styles */
@@ -848,6 +929,12 @@ require_once 'includes/header.php';
     border: 1px solid rgba(16,185,129,0.3);
 }
 
+.alert-error {
+    background: rgba(239,68,68,0.1);
+    color: #991b1b;
+    border: 1px solid rgba(239,68,68,0.3);
+}
+
 @keyframes slideIn {
     from {
         transform: translateY(-20px);
@@ -869,9 +956,104 @@ require_once 'includes/header.php';
     border-top: 2px solid var(--gray-200);
 }
 
+.btn-lg {
+    padding: 12px 30px;
+    font-size: 1rem;
+}
+
 .btn-sm {
     padding: 6px 12px;
     font-size: 0.85rem;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 9999;
+}
+
+.modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(5px);
+}
+
+.modal-container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 500px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+    overflow: hidden;
+    animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -60%);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%);
+    }
+}
+
+.modal-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--gray-200);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    margin: 0;
+}
+
+.close-modal {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--gray-500);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+}
+
+.close-modal:hover {
+    background: var(--danger);
+    color: white;
+}
+
+.modal-body {
+    padding: 20px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.modal-footer {
+    padding: 15px 20px;
+    border-top: 1px solid var(--gray-200);
+    display: flex;
+    justify-content: flex-end;
 }
 
 /* Responsive */
@@ -915,6 +1097,158 @@ document.querySelectorAll('input[type="file"]').forEach(fileInput => {
             label.innerHTML = `<i class="fas fa-check"></i> ${fileName}`;
         }
     });
+});
+
+// Test SMTP connection
+function testSMTP() {
+    const modal = document.getElementById('smtpTestModal');
+    const modalBody = document.getElementById('smtpTestModalBody');
+    const btn = document.getElementById('testSMTPBtn');
+    
+    // Show modal with loading
+    modal.style.display = 'block';
+    modalBody.innerHTML = `
+        <div class="text-center">
+            <i class="fas fa-spinner fa-spin fa-3x"></i>
+            <p>Testing SMTP connection...</p>
+        </div>
+    `;
+    
+   // Test SMTP connection - IMPROVED VERSION
+function testSMTP() {
+    const modal = document.getElementById('smtpTestModal');
+    const modalBody = document.getElementById('smtpTestModalBody');
+    const btn = document.getElementById('testSMTPBtn');
+    
+    // Show modal with loading
+    modal.style.display = 'block';
+    modalBody.innerHTML = `
+        <div class="text-center">
+            <i class="fas fa-spinner fa-spin fa-3x"></i>
+            <p>Testing SMTP connection...</p>
+            <p><small>Connecting to ${document.getElementById('smtp_host').value}:${document.getElementById('smtp_port').value}</small></p>
+        </div>
+    `;
+    
+    // Get SMTP settings from form
+    const data = {
+        host: document.getElementById('smtp_host').value,
+        port: document.getElementById('smtp_port').value,
+        encryption: document.getElementById('smtp_encryption').value,
+        username: document.getElementById('smtp_username').value,
+        password: document.getElementById('smtp_password').value
+    };
+    
+    console.log('Testing SMTP with:', data); // For debugging
+    
+    // Send test request
+    fetch('ajax/test-smtp.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => {
+        console.log('Response status:', response.status);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log('Response data:', data);
+        if (data.success) {
+            modalBody.innerHTML = `
+                <div class="alert alert-success" style="text-align: center; padding: 20px;">
+                    <i class="fas fa-check-circle" style="font-size: 48px; color: #10b981; margin-bottom: 15px;"></i>
+                    <h4 style="margin-bottom: 10px;">Connection Successful!</h4>
+                    <p>${data.message}</p>
+                </div>
+            `;
+        } else {
+            modalBody.innerHTML = `
+                <div class="alert alert-error" style="text-align: center; padding: 20px;">
+                    <i class="fas fa-exclamation-circle" style="font-size: 48px; color: #ef4444; margin-bottom: 15px;"></i>
+                    <h4 style="margin-bottom: 10px;">Connection Failed</h4>
+                    <p>${data.message}</p>
+                    <p style="margin-top: 15px; font-size: 0.9rem;">Please check your SMTP settings and try again.</p>
+                </div>
+            `;
+        }
+    })
+    .catch(error => {
+        console.error('Fetch error:', error);
+        modalBody.innerHTML = `
+            <div class="alert alert-error" style="text-align: center; padding: 20px;">
+                <i class="fas fa-exclamation-circle" style="font-size: 48px; color: #ef4444; margin-bottom: 15px;"></i>
+                <h4 style="margin-bottom: 10px;">Connection Error</h4>
+                <p>Could not connect to test endpoint.</p>
+                <p style="margin-top: 15px; font-size: 0.9rem;">Technical details: ${error.message}</p>
+            </div>
+        `;
+    });
+}
+    
+    // Send test request
+    fetch('ajax/test-smtp.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            modalBody.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle fa-2x"></i>
+                    <div>
+                        <h4>Connection Successful!</h4>
+                        <p>${data.message}</p>
+                        <p>Your SMTP settings are correct and working.</p>
+                    </div>
+                </div>
+            `;
+        } else {
+            modalBody.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-circle fa-2x"></i>
+                    <div>
+                        <h4>Connection Failed</h4>
+                        <p>${data.message}</p>
+                        <p>Please check your SMTP settings and try again.</p>
+                    </div>
+                </div>
+            `;
+        }
+    })
+    .catch(error => {
+        modalBody.innerHTML = `
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-circle fa-2x"></i>
+                <div>
+                    <h4>Connection Error</h4>
+                    <p>Could not connect to test endpoint. Please try again.</p>
+                </div>
+            </div>
+        `;
+    });
+}
+
+function closeSMTPModal() {
+    document.getElementById('smtpTestModal').style.display = 'none';
+}
+
+// Close modal when clicking overlay
+document.querySelector('.modal-overlay')?.addEventListener('click', closeSMTPModal);
+
+// Close modal with Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeSMTPModal();
+    }
 });
 </script>
 

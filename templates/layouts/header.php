@@ -94,7 +94,7 @@
                     <li><a href="#home" class="nav-link">Home</a></li>
                     <li><a href="#about" class="nav-link">About</a></li>
                     <li><a href="#skills" class="nav-link">Skills</a></li>
-                    <li><a href="#projects" class="nav-link">Projects</a></li>
+                    <li><a href="#projects." class="nav-link">Projects</a></li>
                     <li><a href="#testimonials" class="nav-link">Testimonials</a></li>
                     <li><a href="#contact" class="nav-link">Contact</a></li>
                     
@@ -106,7 +106,7 @@
                     } catch (Exception $e) {}
                     if ($blog_count > 0):
                     ?>
-                    <li><a href="<?php echo BASE_URL; ?>/blog" class="nav-link">Blog</a></li>
+                    <li><a href="<?php echo BASE_URL; ?>/blog.php" class="nav-link">Blog</a></li>
                     <?php endif; ?>
                     
                     <!-- Services Dropdown -->
