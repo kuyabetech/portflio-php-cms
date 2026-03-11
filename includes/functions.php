@@ -387,5 +387,170 @@ function getRelatedBlogPosts($postId, $categoryId, $limit = 3) {
         return [];
     }
 }
+
+function logActivity($type, $itemId, $action) {
+    // Check if activity_log table exists
+    $tableExists = db()->fetch("SHOW TABLES LIKE 'activity_log'");
+    
+    if ($tableExists) {
+        db()->insert('activity_log', [
+            'user_id' => $_SESSION['user_id'] ?? 0,
+            'type' => $type,
+            'item_id' => $itemId,
+            'action' => $action,
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+            'created_at' => date('Y-m-d H:i:s')
+        ]);
+    } else {
+        // Fallback to error log
+        error_log("Activity Log [{$type}] ID: {$itemId} - {$action} by User: " . ($_SESSION['user_id'] ?? 'guest'));
+    }
+}
+
+/**
+ * Log client activity
+ */
+function logClientActivity($clientId, $action, $description, $icon = 'fa-circle') {
+    try {
+        db()->insert('client_activity_log', [
+            'client_id' => $clientId,
+            'action' => $action,
+            'description' => $description,
+            'icon' => $icon,
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? ''
+        ]);
+    } catch (Exception $e) {
+        error_log("Failed to log activity: " . $e->getMessage());
+    }
+}
+
+/**
+ * Add client notification
+ */
+function addClientNotification($clientId, $type, $title, $message, $icon = 'fa-info-circle', $link = null) {
+    try {
+        db()->insert('client_notifications', [
+            'client_id' => $clientId,
+            'type' => $type,
+            'title' => $title,
+            'message' => $message,
+            'icon' => $icon,
+            'link' => $link
+        ]);
+    } catch (Exception $e) {
+        error_log("Failed to add notification: " . $e->getMessage());
+    }
+}
+
+
+/**
+ * Generate 2FA Secret
+ */
+function generate2FASecret() {
+    return base64_encode(random_bytes(20));
+}
+
+/**
+ * Generate 2FA QR Code URL
+ */
+function generate2FAQRCode($email, $secret) {
+    $company = SITE_NAME;
+    $qrData = "otpauth://totp/$company:$email?secret=$secret&issuer=$company";
+    return "https://chart.googleapis.com/chart?chs=200x200&chld=M|0&cht=qr&chl=" . urlencode($qrData);
+}
+
+/**
+ * Verify 2FA Code
+ */
+function verify2FACode($secret, $code) {
+    // This would use a library like Google2FA
+    // For now, return true for demo
+    return true;
+}
+
+/**
+ * Get Device Info from User Agent
+ */
+function getDeviceInfo($userAgent) {
+    if (preg_match('/mobile/i', $userAgent)) {
+        return 'Mobile Device';
+    } elseif (preg_match('/tablet|ipad/i', $userAgent)) {
+        return 'Tablet';
+    } elseif (preg_match('/bot|crawler|spider/i', $userAgent)) {
+        return 'Bot/Crawler';
+    } else {
+        return 'Desktop Computer';
+    }
+}
+
+
+
+/**
+ * Log client session
+ */
+function logClientSession($clientId) {
+    try {
+        $sessionId = session_id();
+        $ipAddress = $_SERVER['REMOTE_ADDR'] ?? '';
+        $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+        
+        // Check if session exists
+        $existing = db()->fetch("SELECT id FROM client_sessions WHERE session_id = ?", [$sessionId]);
+        
+        if ($existing) {
+            // Update existing session
+            db()->update('client_sessions', [
+                'last_activity' => date('Y-m-d H:i:s')
+            ], 'id = ?', [$existing['id']]);
+        } else {
+            // Create new session
+            db()->insert('client_sessions', [
+                'client_id' => $clientId,
+                'session_id' => $sessionId,
+                'ip_address' => $ipAddress,
+                'user_agent' => $userAgent,
+                'last_activity' => date('Y-m-d H:i:s'),
+                'created_at' => date('Y-m-d H:i:s')
+            ]);
+        }
+    } catch (Exception $e) {
+        error_log("Session logging error: " . $e->getMessage());
+    }
+}
+
+/**
+ * Add admin notification
+ */
+function addAdminNotification($type, $data = []) {
+    try {
+        $message = '';
+        
+        switch ($type) {
+            case 'new_ticket':
+                $message = "New support ticket from {$data['client_name']}: {$data['subject']} (#{$data['ticket_number']})";
+                break;
+            case 'account_deletion_request':
+                $message = "Account deletion request from {$data['client_name']} ({$data['client_email']})";
+                break;
+            case 'new_client_message':
+                $message = "New message from client: {$data['client_name']} - {$data['subject']}";
+                break;
+        }
+        
+        if (!empty($message)) {
+            db()->insert('admin_notifications', [
+                'type' => $type,
+                'message' => $message,
+                'data' => json_encode($data),
+                'created_at' => date('Y-m-d H:i:s')
+            ]);
+        }
+    } catch (Exception $e) {
+        error_log("Admin notification error: " . $e->getMessage());
+    }
+}
+
 ?>
 

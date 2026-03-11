@@ -176,3 +176,37 @@ INSERT INTO payment_gateways (gateway_name, is_active, sandbox_mode) VALUES
 ('Stripe', 0, 1),
 ('PayPal', 0, 1),
 ('Bank Transfer', 1, 0);
+
+
+
+-- Project timeline/milestones table
+CREATE TABLE IF NOT EXISTS `project_timeline` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `project_id` INT NOT NULL,
+    `title` VARCHAR(200) NOT NULL,
+    `description` TEXT,
+    `due_date` DATE NOT NULL,
+    `completed` BOOLEAN DEFAULT FALSE,
+    `completed_at` DATETIME NULL,
+    `sort_order` INT DEFAULT 0,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_project` (`project_id`),
+    INDEX `idx_due_date` (`due_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Project documents table
+CREATE TABLE IF NOT EXISTS `project_documents` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `project_id` INT NOT NULL,
+    `client_id` INT NULL,
+    `title` VARCHAR(200) NOT NULL,
+    `description` TEXT,
+    `filename` VARCHAR(255) NOT NULL,
+    `file_size` INT,
+    `file_type` VARCHAR(100),
+    `uploaded_by` INT,
+    `download_count` INT DEFAULT 0,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_project` (`project_id`),
+    INDEX `idx_client` (`client_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

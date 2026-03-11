@@ -1,6 +1,6 @@
 <?php
 // includes/database.php
-// Database Connection Class
+// Database Connection Class - FIXED VERSION with consistent parameter handling
 
 class Database {
     private static $instance = null;
@@ -34,12 +34,42 @@ class Database {
         return $this->connection;
     }
     
-    public function query($sql, $params = []) {
+public function query($sql, $params = []) {
+    try {
+        // Ensure that we always use consistent parameter types
+        // If any named parameters are detected, we use them as-is
+        // Otherwise, positional parameters will be used
+        $isNamed = false;
+        foreach (array_keys($params) as $key) {
+            if (is_string($key)) {
+                $isNamed = true;
+                break;
+            }
+        }
+
         $this->statement = $this->connection->prepare($sql);
-        $this->statement->execute($params);
+
+        if ($isNamed) {
+            // Bind named parameters explicitly
+            foreach ($params as $key => $value) {
+                // PDO expects named params to have leading colon
+                $paramKey = (strpos($key, ':') === 0) ? $key : ':' . $key;
+                $this->statement->bindValue($paramKey, $value);
+            }
+            $this->statement->execute();
+        } else {
+            // Positional parameters
+            $this->statement->execute(array_values($params));
+        }
+
         return $this->statement;
+    } catch (PDOException $e) {
+        error_log("Database query error: " . $e->getMessage());
+        error_log("SQL: " . $sql);
+        error_log("Params: " . print_r($params, true));
+        throw $e;
     }
-    
+}
     public function fetch($sql, $params = []) {
         return $this->query($sql, $params)->fetch();
     }
@@ -48,6 +78,14 @@ class Database {
         return $this->query($sql, $params)->fetchAll();
     }
     
+    public function fetchColumn($sql, $params = []) {
+        $result = $this->query($sql, $params)->fetchColumn();
+        return $result;
+    }
+    
+    /**
+     * Insert a record using named parameters
+     */
     public function insert($table, $data) {
         $fields = array_keys($data);
         $placeholders = ':' . implode(', :', $fields);
@@ -57,20 +95,54 @@ class Database {
         return $this->connection->lastInsertId();
     }
     
+    /**
+     * Update records - FIXED to handle both named and positional parameters properly
+     * Use this with named parameters for the SET clause and positional for WHERE
+     */
     public function update($table, $data, $where, $whereParams = []) {
-        $fields = '';
+        // Build SET clause with named parameters
+        $setFields = [];
         foreach (array_keys($data) as $field) {
-            $fields .= "$field = :$field, ";
+            $setFields[] = "$field = :$field";
         }
-        $fields = rtrim($fields, ', ');
+        $setClause = implode(', ', $setFields);
         
-        $sql = "UPDATE $table SET $fields WHERE $where";
-        $params = array_merge($data, $whereParams);
+        $sql = "UPDATE $table SET $setClause WHERE $where";
+        
+        // Merge data (named params) with where params (positional)
+        // Important: We keep them separate - named params for SET, positional for WHERE
+        $params = $data; // Named parameters
+        
+        // Add where params as positional (they will be ? in the WHERE clause)
+        // We need to convert named params to mixed? No, better to use all positional
+        // Let's create a version that uses all positional parameters for consistency
+        return $this->updatePositional($table, $data, $where, $whereParams);
+    }
+    
+    /**
+     * Alternative update method using ONLY positional parameters (recommended)
+     * Use this for simplicity and consistency
+     */
+    public function updatePositional($table, $data, $where, $whereParams = []) {
+        // Build SET clause with positional parameters
+        $setFields = [];
+        foreach (array_keys($data) as $field) {
+            $setFields[] = "$field = ?";
+        }
+        $setClause = implode(', ', $setFields);
+        
+        $sql = "UPDATE $table SET $setClause WHERE $where";
+        
+        // Merge data values with where parameters (all positional)
+        $params = array_merge(array_values($data), $whereParams);
         
         $this->query($sql, $params);
         return $this->statement->rowCount();
     }
     
+    /**
+     * Delete records using positional parameters
+     */
     public function delete($table, $where, $params = []) {
         $sql = "DELETE FROM $table WHERE $where";
         $this->query($sql, $params);
@@ -204,4 +276,6 @@ function getUnreadMessagesCount() {
         return 0;
     }
 }
+
+
 ?>

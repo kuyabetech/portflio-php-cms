@@ -1,6 +1,6 @@
 <?php
 // admin/projects.php
-// Project Management - FULLY RESPONSIVE
+// Project Management with Client Assignment - PHP 8+ Compatible
 
 require_once dirname(__DIR__) . '/includes/init.php';
 Auth::requireAuth();
@@ -22,20 +22,23 @@ if ($action === 'add') {
     $breadcrumbs[] = ['title' => 'Project Details'];
 }
 
+// Get list of clients for dropdown
+$clients = db()->fetchAll("SELECT id, company_name FROM clients ORDER BY company_name") ?? [];
+
 // Handle delete
 if (isset($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
+    $deleteId = (int)$_GET['delete'];
     
     // Get image filename before deleting
-    $project = db()->fetch("SELECT featured_image FROM projects WHERE id = ?", [$id]);
-    if ($project && $project['featured_image']) {
-        $imagePath = UPLOAD_PATH . $project['featured_image'];
+    $project = db()->fetch("SELECT featured_image FROM projects WHERE id = ?", [$deleteId]);
+    if ($project && !empty($project['featured_image'])) {
+        $imagePath = UPLOAD_PATH_PROJECTS . $project['featured_image'];
         if (file_exists($imagePath)) {
             unlink($imagePath);
         }
     }
     
-    db()->delete('projects', 'id = ?', [$id]);
+    db()->delete('projects', 'id = ?', [$deleteId]);
     $_SESSION['flash'] = ['type' => 'success', 'message' => 'Project deleted successfully'];
     header('Location: projects.php');
     exit;
@@ -43,43 +46,65 @@ if (isset($_GET['delete'])) {
 
 // Handle status toggle
 if (isset($_GET['toggle'])) {
-    $id = (int)$_GET['toggle'];
-    $project = db()->fetch("SELECT status FROM projects WHERE id = ?", [$id]);
-    $newStatus = $project['status'] === 'published' ? 'draft' : 'published';
-    db()->update('projects', ['status' => $newStatus], 'id = :id', ['id' => $id]);
-    $_SESSION['flash'] = ['type' => 'success', 'message' => 'Project status updated'];
+    $toggleId = (int)$_GET['toggle'];
+    $project = db()->fetch("SELECT status FROM projects WHERE id = ?", [$toggleId]);
+    if ($project) {
+        $newStatus = $project['status'] === 'published' ? 'draft' : 'published';
+        db()->updatePositional('projects', ['status' => $newStatus], 'id = ?', [$toggleId]);
+        $_SESSION['flash'] = ['type' => 'success', 'message' => 'Project status updated'];
+    }
     header('Location: projects.php');
     exit;
 }
 
 // Handle featured toggle
 if (isset($_GET['featured'])) {
-    $id = (int)$_GET['featured'];
-    $project = db()->fetch("SELECT is_featured FROM projects WHERE id = ?", [$id]);
-    $newStatus = $project['is_featured'] ? 0 : 1;
-    db()->update('projects', ['is_featured' => $newStatus], 'id = :id', ['id' => $id]);
-    $_SESSION['flash'] = ['type' => 'success', 'message' => 'Project featured status updated'];
+    $featuredId = (int)$_GET['featured'];
+    $project = db()->fetch("SELECT is_featured FROM projects WHERE id = ?", [$featuredId]);
+    if ($project) {
+        $newStatus = $project['is_featured'] ? 0 : 1;
+        db()->updatePositional('projects', ['is_featured' => $newStatus], 'id = ?', [$featuredId]);
+        $_SESSION['flash'] = ['type' => 'success', 'message' => 'Project featured status updated'];
+    }
     header('Location: projects.php');
+    exit;
+}
+
+// Handle client assignment
+if (isset($_POST['assign_client'])) {
+    $projectId = (int)$_POST['project_id'];
+    $clientId = !empty($_POST['client_id']) ? (int)$_POST['client_id'] : null;
+    
+    db()->updatePositional('projects', ['client_id' => $clientId], 'id = ?', [$projectId]);
+    $_SESSION['flash'] = ['type' => 'success', 'message' => $clientId ? 'Client assigned successfully' : 'Client unassigned successfully'];
+    header('Location: projects.php?action=view&id=' . $projectId);
     exit;
 }
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_project'])) {
     $data = [
-        'title' => sanitize($_POST['title']),
-        'slug' => createSlug($_POST['title']),
-        'short_description' => sanitize($_POST['short_description']),
-        'full_description' => $_POST['full_description'],
-        'category' => sanitize($_POST['category']),
-        'technologies' => sanitize($_POST['technologies']),
-        'client_name' => sanitize($_POST['client_name']),
-        'client_website' => sanitize($_POST['client_website']),
-        'completion_date' => $_POST['completion_date'],
-        'project_url' => sanitize($_POST['project_url']),
-        'github_url' => sanitize($_POST['github_url']),
+        'title' => sanitize($_POST['title'] ?? ''),
+        'slug' => createSlug($_POST['title'] ?? ''),
+        'short_description' => sanitize($_POST['short_description'] ?? ''),
+        'full_description' => $_POST['full_description'] ?? '',
+        'category' => sanitize($_POST['category'] ?? ''),
+        'technologies' => sanitize($_POST['technologies'] ?? ''),
+        'client_name' => sanitize($_POST['client_name'] ?? ''),
+        'client_website' => sanitize($_POST['client_website'] ?? ''),
+        'budget' => !empty($_POST['budget']) ? (float)$_POST['budget'] : null,
+        'start_date' => !empty($_POST['start_date']) ? $_POST['start_date'] : null,
+        'completion_date' => !empty($_POST['completion_date']) ? $_POST['completion_date'] : null,
+        'project_url' => sanitize($_POST['project_url'] ?? ''),
+        'github_url' => sanitize($_POST['github_url'] ?? ''),
         'is_featured' => isset($_POST['is_featured']) ? 1 : 0,
-        'status' => $_POST['status']
+        'status' => $_POST['status'] ?? 'draft'
     ];
+    
+    // Add client_id if selected
+    if (!empty($_POST['client_id'])) {
+        $data['client_id'] = (int)$_POST['client_id'];
+    }
     
     // Validate required fields
     $errors = [];
@@ -100,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_project'])) {
             // Delete old image if updating
             if (!empty($_POST['id'])) {
                 $old = db()->fetch("SELECT featured_image FROM projects WHERE id = ?", [$_POST['id']]);
-                if ($old && $old['featured_image']) {
+                if ($old && !empty($old['featured_image'])) {
                     $oldPath = UPLOAD_PATH_PROJECTS . $old['featured_image'];
                     if (file_exists($oldPath)) {
                         unlink($oldPath);
@@ -112,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_project'])) {
     }
     
     if (!empty($_POST['id'])) {
-        db()->update('projects', $data, 'id = :id', ['id' => $_POST['id']]);
+        db()->updatePositional('projects', $data, 'id = ?', [$_POST['id']]);
         $_SESSION['flash'] = ['type' => 'success', 'message' => 'Project updated successfully'];
     } else {
         db()->insert('projects', $data);
@@ -129,8 +154,13 @@ if ($id > 0 && ($action === 'edit' || $action === 'view')) {
     $project = db()->fetch("SELECT * FROM projects WHERE id = ?", [$id]);
 }
 
-// Get all projects
-$projects = db()->fetchAll("SELECT * FROM projects ORDER BY created_at DESC") ?? [];
+// Get all projects with client info
+$projects = db()->fetchAll("
+    SELECT p.*, c.company_name as client_company 
+    FROM projects p
+    LEFT JOIN clients c ON p.client_id = c.id
+    ORDER BY p.created_at DESC
+") ?? [];
 
 // Get statistics
 $stats = db()->fetch("
@@ -156,8 +186,8 @@ require_once 'includes/header.php';
         elseif ($action === 'add') echo 'Add New Project';
         else echo 'Projects Management';
         ?>
-        <?php if ($action === 'list' && $stats['total'] > 0): ?>
-        <span class="header-badge"><?php echo $stats['published']; ?> published</span>
+        <?php if ($action === 'list' && ($stats['total'] ?? 0) > 0): ?>
+        <span class="header-badge"><?php echo $stats['published'] ?? 0; ?> published</span>
         <?php endif; ?>
     </h1>
     <div class="header-actions">
@@ -165,11 +195,14 @@ require_once 'includes/header.php';
         <a href="?action=add" class="btn btn-primary">
             <i class="fas fa-plus"></i> Add New Project
         </a>
+        <a href="#" class="btn btn-outline" onclick="$('#filterModal').modal('show')">
+            <i class="fas fa-filter"></i> Filter
+        </a>
         <?php elseif ($action === 'view' && $project): ?>
         <a href="?action=edit&id=<?php echo $project['id']; ?>" class="btn btn-primary">
             <i class="fas fa-edit"></i> Edit Project
         </a>
-        <a href="<?php echo BASE_URL; ?>/project/<?php echo $project['slug']; ?>" target="_blank" class="btn btn-outline">
+        <a href="<?php echo BASE_URL; ?>/project/<?php echo $project['slug'] ?? ''; ?>" target="_blank" class="btn btn-outline">
             <i class="fas fa-eye"></i> View Live
         </a>
         <?php else: ?>
@@ -199,7 +232,7 @@ require_once 'includes/header.php';
             </div>
             <div class="stat-details">
                 <span class="stat-label">Total Projects</span>
-                <span class="stat-value"><?php echo $stats['total']; ?></span>
+                <span class="stat-value"><?php echo $stats['total'] ?? 0; ?></span>
             </div>
         </div>
         
@@ -209,7 +242,7 @@ require_once 'includes/header.php';
             </div>
             <div class="stat-details">
                 <span class="stat-label">Published</span>
-                <span class="stat-value"><?php echo $stats['published']; ?></span>
+                <span class="stat-value"><?php echo $stats['published'] ?? 0; ?></span>
             </div>
         </div>
         
@@ -219,7 +252,7 @@ require_once 'includes/header.php';
             </div>
             <div class="stat-details">
                 <span class="stat-label">Draft</span>
-                <span class="stat-value"><?php echo $stats['draft']; ?></span>
+                <span class="stat-value"><?php echo $stats['draft'] ?? 0; ?></span>
             </div>
         </div>
         
@@ -229,9 +262,51 @@ require_once 'includes/header.php';
             </div>
             <div class="stat-details">
                 <span class="stat-label">Featured</span>
-                <span class="stat-value"><?php echo $stats['featured']; ?></span>
+                <span class="stat-value"><?php echo $stats['featured'] ?? 0; ?></span>
             </div>
         </div>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="filter-bar">
+        <form method="GET" class="filter-form" id="filterForm">
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label>Status</label>
+                    <select name="status" class="filter-select">
+                        <option value="">All Status</option>
+                        <option value="published">Published</option>
+                        <option value="draft">Draft</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label>Client</label>
+                    <select name="client" class="filter-select">
+                        <option value="">All Clients</option>
+                        <?php foreach ($clients as $client): ?>
+                        <option value="<?php echo $client['id']; ?>"><?php echo htmlspecialchars($client['company_name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label>Search</label>
+                    <input type="text" name="search" class="filter-input" placeholder="Search projects...">
+                </div>
+                
+                <div class="filter-actions">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fas fa-search"></i> Apply
+                    </button>
+                    <a href="projects.php" class="btn btn-outline btn-sm">
+                        <i class="fas fa-redo"></i> Reset
+                    </a>
+                </div>
+            </div>
+        </form>
     </div>
 
     <!-- Desktop Table View -->
@@ -242,8 +317,9 @@ require_once 'includes/header.php';
                     <tr>
                         <th width="60">Image</th>
                         <th>Title</th>
+                        <th>Client</th>
                         <th>Category</th>
-                        <th>Technologies</th>
+                        <th>Budget</th>
                         <th>Status</th>
                         <th width="80">Featured</th>
                         <th>Date</th>
@@ -254,9 +330,9 @@ require_once 'includes/header.php';
                     <?php foreach ($projects as $project): ?>
                     <tr>
                         <td class="image-cell">
-                            <?php if ($project['featured_image']): ?>
+                            <?php if (!empty($project['featured_image'])): ?>
                             <img src="<?php echo UPLOAD_URL_PROJECTS . $project['featured_image']; ?>" 
-                                 alt="<?php echo htmlspecialchars($project['title']); ?>" 
+                                 alt="<?php echo htmlspecialchars($project['title'] ?? ''); ?>" 
                                  class="project-thumbnail">
                             <?php else: ?>
                             <div class="thumbnail-placeholder">
@@ -266,38 +342,42 @@ require_once 'includes/header.php';
                         </td>
                         <td>
                             <div class="project-title">
-                                <strong><?php echo htmlspecialchars($project['title']); ?></strong>
+                                <strong><?php echo htmlspecialchars($project['title'] ?? 'Untitled'); ?></strong>
                                 <?php if (!empty($project['short_description'])): ?>
                                 <br><small><?php echo htmlspecialchars(substr($project['short_description'], 0, 60)); ?>...</small>
                                 <?php endif; ?>
                             </div>
                         </td>
                         <td>
+                            <?php if (!empty($project['client_company'])): ?>
+                            <span class="client-badge">
+                                <i class="fas fa-building"></i>
+                                <?php echo htmlspecialchars($project['client_company']); ?>
+                            </span>
+                            <?php else: ?>
+                            <span class="text-muted">—</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
                             <span class="category-badge"><?php echo htmlspecialchars($project['category'] ?: 'Uncategorized'); ?></span>
                         </td>
                         <td>
-                            <div class="tech-tags">
-                                <?php 
-                                $techs = array_filter(array_map('trim', explode(',', $project['technologies'] ?? '')));
-                                foreach (array_slice($techs, 0, 3) as $tech): 
-                                ?>
-                                <span class="tech-tag"><?php echo htmlspecialchars($tech); ?></span>
-                                <?php endforeach; ?>
-                                <?php if (count($techs) > 3): ?>
-                                <span class="tech-tag more">+<?php echo count($techs) - 3; ?></span>
-                                <?php endif; ?>
-                            </div>
+                            <?php if (!empty($project['budget'])): ?>
+                            <strong>$<?php echo number_format($project['budget'], 2); ?></strong>
+                            <?php else: ?>
+                            <span class="text-muted">—</span>
+                            <?php endif; ?>
                         </td>
                         <td>
                             <a href="?toggle=<?php echo $project['id']; ?>" class="status-toggle" title="Click to toggle status">
-                                <span class="status-badge <?php echo $project['status']; ?>">
-                                    <?php echo ucfirst($project['status']); ?>
+                                <span class="status-badge <?php echo $project['status'] ?? 'draft'; ?>">
+                                    <?php echo ucfirst($project['status'] ?? 'draft'); ?>
                                 </span>
                             </a>
                         </td>
                         <td class="text-center">
                             <a href="?featured=<?php echo $project['id']; ?>" class="featured-toggle" title="Toggle featured">
-                                <?php if ($project['is_featured']): ?>
+                                <?php if (!empty($project['is_featured'])): ?>
                                 <i class="fas fa-star featured-star"></i>
                                 <?php else: ?>
                                 <i class="far fa-star"></i>
@@ -306,8 +386,8 @@ require_once 'includes/header.php';
                         </td>
                         <td>
                             <div class="date-info">
-                                <span class="created-date"><?php echo date('M d, Y', strtotime($project['created_at'])); ?></span>
-                                <?php if ($project['completion_date']): ?>
+                                <span class="created-date"><?php echo date('M d, Y', strtotime($project['created_at'] ?? 'now')); ?></span>
+                                <?php if (!empty($project['completion_date'])): ?>
                                 <br><small class="completion-date">Completed: <?php echo date('M Y', strtotime($project['completion_date'])); ?></small>
                                 <?php endif; ?>
                             </div>
@@ -324,9 +404,11 @@ require_once 'includes/header.php';
                                    onclick="return confirm('Are you sure you want to delete this project? This action cannot be undone.')" title="Delete">
                                     <i class="fas fa-trash"></i>
                                 </a>
+                                <?php if (!empty($project['slug'])): ?>
                                 <a href="<?php echo BASE_URL; ?>/project/<?php echo $project['slug']; ?>" target="_blank" class="action-btn" title="View Live">
                                     <i class="fas fa-external-link-alt"></i>
                                 </a>
+                                <?php endif; ?>
                             </div>
                         </td>
                     </tr>
@@ -334,7 +416,7 @@ require_once 'includes/header.php';
                     
                     <?php if (empty($projects)): ?>
                     <tr>
-                        <td colspan="8" class="text-center">
+                        <td colspan="9" class="text-center">
                             <div class="empty-state">
                                 <i class="fas fa-project-diagram"></i>
                                 <h3>No Projects Found</h3>
@@ -352,12 +434,12 @@ require_once 'includes/header.php';
     <!-- Mobile Cards View -->
     <div class="mobile-cards">
         <?php foreach ($projects as $project): ?>
-        <div class="project-card status-<?php echo $project['status']; ?>">
+        <div class="project-card status-<?php echo $project['status'] ?? 'draft'; ?>">
             <div class="card-header">
                 <div class="project-media">
-                    <?php if ($project['featured_image']): ?>
+                    <?php if (!empty($project['featured_image'])): ?>
                     <img src="<?php echo UPLOAD_URL_PROJECTS . $project['featured_image']; ?>" 
-                         alt="<?php echo htmlspecialchars($project['title']); ?>"
+                         alt="<?php echo htmlspecialchars($project['title'] ?? ''); ?>"
                          class="card-image">
                     <?php else: ?>
                     <div class="card-image-placeholder">
@@ -365,7 +447,7 @@ require_once 'includes/header.php';
                     </div>
                     <?php endif; ?>
                     
-                    <?php if ($project['is_featured']): ?>
+                    <?php if (!empty($project['is_featured'])): ?>
                     <span class="featured-badge" title="Featured Project">
                         <i class="fas fa-star"></i>
                     </span>
@@ -373,8 +455,13 @@ require_once 'includes/header.php';
                 </div>
                 
                 <div class="project-info">
-                    <h3><?php echo htmlspecialchars($project['title']); ?></h3>
+                    <h3><?php echo htmlspecialchars($project['title'] ?? 'Untitled'); ?></h3>
                     <span class="category-badge"><?php echo htmlspecialchars($project['category'] ?: 'Uncategorized'); ?></span>
+                    <?php if (!empty($project['client_company'])): ?>
+                    <span class="client-badge">
+                        <i class="fas fa-building"></i> <?php echo htmlspecialchars($project['client_company']); ?>
+                    </span>
+                    <?php endif; ?>
                 </div>
             </div>
             
@@ -383,42 +470,28 @@ require_once 'includes/header.php';
                 <p class="project-description"><?php echo htmlspecialchars($project['short_description']); ?></p>
                 <?php endif; ?>
                 
-                <div class="tech-section">
-                    <strong>Technologies:</strong>
-                    <div class="tech-tags">
-                        <?php 
-                        $techs = array_filter(array_map('trim', explode(',', $project['technologies'] ?? '')));
-                        foreach ($techs as $tech): 
-                        ?>
-                        <span class="tech-tag"><?php echo htmlspecialchars($tech); ?></span>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-                
                 <div class="info-grid">
                     <div class="info-item">
                         <span class="info-label">Status:</span>
-                        <span class="status-badge <?php echo $project['status']; ?>">
-                            <?php echo ucfirst($project['status']); ?>
+                        <span class="status-badge <?php echo $project['status'] ?? 'draft'; ?>">
+                            <?php echo ucfirst($project['status'] ?? 'draft'); ?>
                         </span>
                     </div>
                     
                     <div class="info-item">
-                        <span class="info-label">Created:</span>
-                        <span><?php echo date('M d, Y', strtotime($project['created_at'])); ?></span>
+                        <span class="info-label">Budget:</span>
+                        <span><?php echo $project['budget'] ? '$' . number_format($project['budget'], 2) : '—'; ?></span>
                     </div>
                     
-                    <?php if ($project['completion_date']): ?>
+                    <div class="info-item">
+                        <span class="info-label">Created:</span>
+                        <span><?php echo date('M d, Y', strtotime($project['created_at'] ?? 'now')); ?></span>
+                    </div>
+                    
+                    <?php if (!empty($project['completion_date'])): ?>
                     <div class="info-item">
                         <span class="info-label">Completed:</span>
                         <span><?php echo date('M Y', strtotime($project['completion_date'])); ?></span>
-                    </div>
-                    <?php endif; ?>
-                    
-                    <?php if ($project['client_name']): ?>
-                    <div class="info-item">
-                        <span class="info-label">Client:</span>
-                        <span><?php echo htmlspecialchars($project['client_name']); ?></span>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -434,11 +507,7 @@ require_once 'includes/header.php';
                     </a>
                     <a href="?toggle=<?php echo $project['id']; ?>" class="btn btn-sm btn-outline">
                         <i class="fas fa-power-off"></i> 
-                        <?php echo $project['status'] === 'published' ? 'Draft' : 'Publish'; ?>
-                    </a>
-                    <a href="?featured=<?php echo $project['id']; ?>" class="btn btn-sm btn-outline">
-                        <i class="fas <?php echo $project['is_featured'] ? 'fa-star' : 'fa-star-o'; ?>"></i>
-                        <?php echo $project['is_featured'] ? 'Unfeature' : 'Feature'; ?>
+                        <?php echo ($project['status'] ?? 'draft') === 'published' ? 'Draft' : 'Publish'; ?>
                     </a>
                     <a href="?delete=<?php echo $project['id']; ?>" class="btn btn-sm btn-outline-danger" 
                        onclick="return confirm('Are you sure you want to delete this project?')">
@@ -463,18 +532,18 @@ require_once 'includes/header.php';
     <!-- Project Details View -->
     <div class="details-container">
         <div class="details-header">
-            <?php if ($project['featured_image']): ?>
+            <?php if (!empty($project['featured_image'])): ?>
             <img src="<?php echo UPLOAD_URL_PROJECTS . $project['featured_image']; ?>" 
-                 alt="<?php echo htmlspecialchars($project['title']); ?>" 
+                 alt="<?php echo htmlspecialchars($project['title'] ?? ''); ?>" 
                  class="details-image">
             <?php endif; ?>
             <div class="details-title-section">
-                <h2><?php echo htmlspecialchars($project['title']); ?></h2>
+                <h2><?php echo htmlspecialchars($project['title'] ?? 'Untitled'); ?></h2>
                 <div class="details-meta">
-                    <span class="status-badge <?php echo $project['status']; ?>">
-                        <?php echo ucfirst($project['status']); ?>
+                    <span class="status-badge <?php echo $project['status'] ?? 'draft'; ?>">
+                        <?php echo ucfirst($project['status'] ?? 'draft'); ?>
                     </span>
-                    <?php if ($project['is_featured']): ?>
+                    <?php if (!empty($project['is_featured'])): ?>
                     <span class="featured-badge">
                         <i class="fas fa-star"></i> Featured
                     </span>
@@ -494,6 +563,7 @@ require_once 'includes/header.php';
                     <div class="info-item">
                         <span class="info-label">Technologies:</span>
                         <span class="info-value">
+                            <?php if (!empty($project['technologies'])): ?>
                             <div class="tech-tags">
                                 <?php 
                                 $techs = array_filter(array_map('trim', explode(',', $project['technologies'] ?? '')));
@@ -502,36 +572,86 @@ require_once 'includes/header.php';
                                 <span class="tech-tag"><?php echo htmlspecialchars($tech); ?></span>
                                 <?php endforeach; ?>
                             </div>
+                            <?php else: ?>
+                            <span class="text-muted">—</span>
+                            <?php endif; ?>
                         </span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">Created:</span>
-                        <span class="info-value"><?php echo date('F d, Y', strtotime($project['created_at'])); ?></span>
+                        <span class="info-label">Budget:</span>
+                        <span class="info-value"><?php echo !empty($project['budget']) ? '$' . number_format($project['budget'], 2) : '—'; ?></span>
                     </div>
-                    <?php if ($project['completion_date']): ?>
+                    <div class="info-item">
+                        <span class="info-label">Start Date:</span>
+                        <span class="info-value"><?php echo !empty($project['start_date']) ? date('F d, Y', strtotime($project['start_date'])) : '—'; ?></span>
+                    </div>
+                    <?php if (!empty($project['completion_date'])): ?>
                     <div class="info-item">
                         <span class="info-label">Completed:</span>
                         <span class="info-value"><?php echo date('F d, Y', strtotime($project['completion_date'])); ?></span>
                     </div>
                     <?php endif; ?>
+                    <div class="info-item">
+                        <span class="info-label">Created:</span>
+                        <span class="info-value"><?php echo date('F d, Y', strtotime($project['created_at'] ?? 'now')); ?></span>
+                    </div>
                 </div>
             </div>
             
-            <?php if ($project['client_name'] || $project['client_website']): ?>
+            <!-- Client Assignment Card -->
+            <div class="details-card">
+                <h3><i class="fas fa-building"></i> Client Assignment</h3>
+                <div class="info-list">
+                    <div class="info-item">
+                        <span class="info-label">Current Client:</span>
+                        <span class="info-value">
+                            <?php
+                            if (!empty($project['client_id'])) {
+                                $clientInfo = db()->fetch("SELECT company_name FROM clients WHERE id = ?", [$project['client_id']]);
+                                echo $clientInfo ? htmlspecialchars($clientInfo['company_name']) : '<span class="text-muted">Not found</span>';
+                            } else {
+                                echo '<span class="text-muted">Not assigned</span>';
+                            }
+                            ?>
+                        </span>
+                    </div>
+                    
+                    <form method="POST" class="mt-3">
+                        <input type="hidden" name="project_id" value="<?php echo $project['id']; ?>">
+                        <div class="form-row" style="gap: 10px; display: flex; flex-wrap: wrap;">
+                            <div class="form-group" style="flex: 1; min-width: 200px;">
+                                <select name="client_id" class="form-control">
+                                    <option value="">— Unassign Client —</option>
+                                    <?php foreach ($clients as $client): ?>
+                                    <option value="<?php echo $client['id']; ?>" <?php echo ($client['id'] ?? '') == ($project['client_id'] ?? '') ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($client['company_name'] ?? ''); ?>
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <button type="submit" name="assign_client" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Update
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <?php if (!empty($project['client_name']) || !empty($project['client_website'])): ?>
             <div class="details-card">
                 <h3><i class="fas fa-user-tie"></i> Client Information</h3>
                 <div class="info-list">
-                    <?php if ($project['client_name']): ?>
+                    <?php if (!empty($project['client_name'])): ?>
                     <div class="info-item">
-                        <span class="info-label">Client Name:</span>
+                        <span class="info-label">Name:</span>
                         <span class="info-value"><?php echo htmlspecialchars($project['client_name']); ?></span>
                     </div>
                     <?php endif; ?>
-                    <?php if ($project['client_website']): ?>
+                    <?php if (!empty($project['client_website'])): ?>
                     <div class="info-item">
                         <span class="info-label">Website:</span>
                         <span class="info-value">
-                            <a href="<?php echo htmlspecialchars($project['client_website']); ?>" target="_blank">
+                            <a href="<?php echo htmlspecialchars($project['client_website']); ?>" target="_blank" rel="noopener noreferrer">
                                 <?php echo htmlspecialchars($project['client_website']); ?>
                                 <i class="fas fa-external-link-alt"></i>
                             </a>
@@ -542,25 +662,25 @@ require_once 'includes/header.php';
             </div>
             <?php endif; ?>
             
-            <?php if ($project['project_url'] || $project['github_url']): ?>
+            <?php if (!empty($project['project_url']) || !empty($project['github_url'])): ?>
             <div class="details-card">
                 <h3><i class="fas fa-link"></i> Project Links</h3>
                 <div class="info-list">
-                    <?php if ($project['project_url']): ?>
+                    <?php if (!empty($project['project_url'])): ?>
                     <div class="info-item">
                         <span class="info-label">Live URL:</span>
                         <span class="info-value">
-                            <a href="<?php echo htmlspecialchars($project['project_url']); ?>" target="_blank">
+                            <a href="<?php echo htmlspecialchars($project['project_url']); ?>" target="_blank" rel="noopener noreferrer">
                                 View Project <i class="fas fa-external-link-alt"></i>
                             </a>
                         </span>
                     </div>
                     <?php endif; ?>
-                    <?php if ($project['github_url']): ?>
+                    <?php if (!empty($project['github_url'])): ?>
                     <div class="info-item">
                         <span class="info-label">GitHub:</span>
                         <span class="info-value">
-                            <a href="<?php echo htmlspecialchars($project['github_url']); ?>" target="_blank">
+                            <a href="<?php echo htmlspecialchars($project['github_url']); ?>" target="_blank" rel="noopener noreferrer">
                                 View Repository <i class="fas fa-external-link-alt"></i>
                             </a>
                         </span>
@@ -633,7 +753,42 @@ require_once 'includes/header.php';
             </div>
             
             <div class="form-section">
-                <h2><i class="fas fa-cogs"></i> Technologies & Details</h2>
+                <h2><i class="fas fa-cogs"></i> Project Details</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="client_id">Assign to Client</label>
+                        <select id="client_id" name="client_id" class="form-control">
+                            <option value="">— No Client —</option>
+                            <?php foreach ($clients as $client): ?>
+                            <option value="<?php echo $client['id']; ?>" <?php echo ($project['client_id'] ?? '') == $client['id'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($client['company_name'] ?? ''); ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="budget">Budget ($)</label>
+                        <input type="number" id="budget" name="budget" step="0.01" min="0"
+                               value="<?php echo htmlspecialchars($project['budget'] ?? ''); ?>"
+                               placeholder="0.00">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="start_date">Start Date</label>
+                        <input type="date" id="start_date" name="start_date" 
+                               value="<?php echo htmlspecialchars($project['start_date'] ?? ''); ?>">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="completion_date">Completion Date</label>
+                        <input type="date" id="completion_date" name="completion_date" 
+                               value="<?php echo htmlspecialchars($project['completion_date'] ?? ''); ?>">
+                    </div>
+                </div>
                 
                 <div class="form-group">
                     <label for="technologies">Technologies Used</label>
@@ -642,27 +797,26 @@ require_once 'includes/header.php';
                            placeholder="PHP, MySQL, JavaScript, React (comma separated)">
                     <p class="help-text">Separate technologies with commas</p>
                 </div>
+            </div>
+            
+            <div class="form-section">
+                <h2><i class="fas fa-user-tie"></i> Client Information (Optional)</h2>
+                <p class="help-text">Use this if the client is not in your client list or for external clients</p>
                 
                 <div class="form-row">
-                    <div class="form-group">
-                        <label for="completion_date">Completion Date</label>
-                        <input type="date" id="completion_date" name="completion_date" 
-                               value="<?php echo htmlspecialchars($project['completion_date'] ?? ''); ?>">
-                    </div>
-                    
                     <div class="form-group">
                         <label for="client_name">Client Name</label>
                         <input type="text" id="client_name" name="client_name" 
                                value="<?php echo htmlspecialchars($project['client_name'] ?? ''); ?>"
                                placeholder="e.g., ABC Corp">
                     </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="client_website">Client Website</label>
-                    <input type="url" id="client_website" name="client_website" 
-                           value="<?php echo htmlspecialchars($project['client_website'] ?? ''); ?>"
-                           placeholder="https://client-website.com">
+                    
+                    <div class="form-group">
+                        <label for="client_website">Client Website</label>
+                        <input type="url" id="client_website" name="client_website" 
+                               value="<?php echo htmlspecialchars($project['client_website'] ?? ''); ?>"
+                               placeholder="https://client-website.com">
+                    </div>
                 </div>
             </div>
             
@@ -697,7 +851,7 @@ require_once 'includes/header.php';
                             <i class="fas fa-upload"></i> Choose File
                         </div>
                     </div>
-                    <?php if ($project && $project['featured_image']): ?>
+                    <?php if ($project && !empty($project['featured_image'])): ?>
                     <div class="current-image">
                         <img src="<?php echo UPLOAD_URL_PROJECTS . $project['featured_image']; ?>" 
                              alt="Current featured image" class="preview-image">
@@ -717,13 +871,16 @@ require_once 'includes/header.php';
                         <select id="status" name="status">
                             <option value="draft" <?php echo (($project['status'] ?? '') === 'draft') ? 'selected' : ''; ?>>Draft</option>
                             <option value="published" <?php echo (($project['status'] ?? '') === 'published') ? 'selected' : ''; ?>>Published</option>
+                            <option value="in_progress" <?php echo (($project['status'] ?? '') === 'in_progress') ? 'selected' : ''; ?>>In Progress</option>
+                            <option value="completed" <?php echo (($project['status'] ?? '') === 'completed') ? 'selected' : ''; ?>>Completed</option>
+                            <option value="on_hold" <?php echo (($project['status'] ?? '') === 'on_hold') ? 'selected' : ''; ?>>On Hold</option>
                         </select>
                     </div>
                     
                     <div class="form-group checkbox-group">
                         <label class="checkbox-label">
                             <input type="checkbox" name="is_featured" 
-                                   <?php echo ($project['is_featured'] ?? 0) ? 'checked' : ''; ?>>
+                                   <?php echo !empty($project['is_featured']) ? 'checked' : ''; ?>>
                             <span class="checkbox-text">
                                 <i class="fas fa-star"></i>
                                 Feature this project on homepage
@@ -743,6 +900,256 @@ require_once 'includes/header.php';
         </form>
     </div>
 <?php endif; ?>
+
+<!-- Filter Modal -->
+<div class="modal fade" id="filterModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Filter Projects</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="filterModalForm">
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select name="status" class="form-control">
+                            <option value="">All</option>
+                            <option value="published">Published</option>
+                            <option value="draft">Draft</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Client</label>
+                        <select name="client" class="form-control">
+                            <option value="">All Clients</option>
+                            <?php foreach ($clients as $client): ?>
+                            <option value="<?php echo $client['id']; ?>"><?php echo htmlspecialchars($client['company_name'] ?? ''); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Date Range</label>
+                        <div class="row">
+                            <div class="col-6">
+                                <input type="date" name="date_from" class="form-control" placeholder="From">
+                            </div>
+                            <div class="col-6">
+                                <input type="date" name="date_to" class="form-control" placeholder="To">
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline" data-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="applyFilters()">Apply Filters</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* ========================================
+   ADDITIONAL STYLES
+   ======================================== */
+
+.client-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #e2e8f0;
+    border-radius: 20px;
+    font-size: 11px;
+    color: #475569;
+    font-weight: 500;
+}
+
+.client-badge i {
+    font-size: 10px;
+    color: #667eea;
+}
+
+.form-row {
+    display: flex;
+    gap: 15px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.form-row .form-group {
+    flex: 1;
+    margin-bottom: 0;
+    min-width: 200px;
+}
+
+.mt-3 {
+    margin-top: 15px;
+}
+
+/* Filter Bar */
+.filter-bar {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.filter-row {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+
+.filter-group {
+    flex: 1;
+    min-width: 150px;
+}
+
+.filter-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #475569;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.filter-select,
+.filter-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.filter-select:focus,
+.filter-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+
+.filter-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal.show {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-dialog {
+    width: 90%;
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+}
+
+.modal-header {
+    padding: 20px;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h5 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.modal-header .close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #94a3b8;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-footer {
+    padding: 20px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+
+</style>
+<style>
+/* ========================================
+   ADDITIONAL STYLES
+   ======================================== */
+
+.client-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #e2e8f0;
+    border-radius: 20px;
+    font-size: 11px;
+    color: #475569;
+    font-weight: 500;
+}
+
+.client-badge i {
+    font-size: 10px;
+    color: #667eea;
+}
+
+.form-row {
+    display: flex;
+    gap: 15px;
+    align-items: flex-end;
+}
+
+.form-row .form-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.mt-3 {
+    margin-top: 15px;
+}
+
+
+</style>
 
 <style>
 /* ========================================
@@ -1740,6 +2147,38 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 5000);
     });
 });
+
+// Modal functions
+function showFilterModal() {
+    document.getElementById('filterModal').classList.add('show');
+}
+
+function hideFilterModal() {
+    document.getElementById('filterModal').classList.remove('show');
+}
+
+function applyFilters() {
+    // Get form data
+    const form = document.getElementById('filterModalForm');
+    const formData = new FormData(form);
+    
+    // Build query string
+    const params = new URLSearchParams();
+    for (let [key, value] of formData.entries()) {
+        if (value) params.append(key, value);
+    }
+    
+    // Redirect with filters
+    window.location.href = 'projects.php?' + params.toString();
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    const modal = document.getElementById('filterModal');
+    if (event.target == modal) {
+        hideFilterModal();
+    }
+}
 
 // Handle responsive behavior
 function handleResponsive() {

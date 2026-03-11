@@ -1,7 +1,12 @@
-RewriteEngine On
-RewriteBase /
-
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-
-RewriteRule ^(.*)$ index.php?url=$1 [L,QSA]
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    
+    # Force HTTPS (comment out for local development)
+    # RewriteCond %{HTTPS} off
+    # RewriteCond %{HTTP_HOST} !^localhost [NC]
+    # RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+    
+    # Handle PHP errors
+    php_flag display_errors on
+    php_value error_reporting E_ALL
+</IfModule>

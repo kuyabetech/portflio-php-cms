@@ -90,6 +90,12 @@ if (!defined('CONFIG_INITIALIZED')) {
 
     // Mark config as initialized
     define('CONFIG_INITIALIZED', true);
+    define('MSG_STATUS_UNREAD', 0);
+    define('MSG_STATUS_READ', 1);
+    define('MSG_STATUS_REPLIED', 2);
+    // Message sender types
+    define('SENDER_ADMIN', 'admin');
+    define('SENDER_CLIENT', 'client');
 }
 
 // Start session if not started

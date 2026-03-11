@@ -85,19 +85,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_invoice'])) {
     $taxRate = isset($_POST['tax_rate']) ? (float)$_POST['tax_rate'] : 0;
     $taxAmount = $subtotal * ($taxRate / 100);
     
-    // Fix discount_type - use only values that exist in your database ENUM
-    // Common values: 'percentage', 'fixed', 'none', '0', '1', etc.
+    // Fix discount_type - use only alphanumeric characters
     $discountType = $_POST['discount_type'] ?? 'none';
-    
-    // Map 'none' to a valid value (adjust based on your database schema)
-    // Option 1: If your ENUM accepts 'none'
-    $validDiscountType = $discountType;
-    
-    // Option 2: If your ENUM only accepts 'percentage' and 'fixed', use empty string or null
-    // $validDiscountType = in_array($discountType, ['percentage', 'fixed']) ? $discountType : '';
-    
-    // Option 3: If your column is TINYINT (0/1)
-    // $validDiscountType = $discountType === 'percentage' ? 1 : 0;
+    $validDiscountType = preg_replace('/[^a-zA-Z0-9_]/', '', $discountType);
+    if (empty($validDiscountType)) {
+        $validDiscountType = 'none';
+    }
     
     $discountValue = isset($_POST['discount_value']) ? (float)$_POST['discount_value'] : 0;
     $discountAmount = 0;
@@ -107,7 +100,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_invoice'])) {
     } elseif ($discountType === 'fixed') {
         $discountAmount = $discountValue;
     }
-    // If 'none', discountAmount remains 0
     
     $shippingAmount = isset($_POST['shipping_amount']) ? (float)$_POST['shipping_amount'] : 0;
     $total = $subtotal + $taxAmount - $discountAmount + $shippingAmount;
@@ -138,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_invoice'])) {
         'subtotal' => $subtotal,
         'tax_rate' => $taxRate,
         'tax_amount' => $taxAmount,
-        'discount_type' => $validDiscountType, // Use the validated value
+        'discount_type' => $validDiscountType,
         'discount_value' => $discountValue,
         'discount_amount' => $discountAmount,
         'shipping_amount' => $shippingAmount,
@@ -153,28 +145,141 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_invoice'])) {
         'business_number' => $_POST['business_number'] ?? '',
         'created_by' => $_SESSION['user_id'] ?? 0
     ];
-
-// Generate unique invoice number
-function generateInvoiceNumber() {
-    $year = date('Y');
-    $month = date('m');
     
-    $lastInvoice = db()->fetch("
-        SELECT invoice_number FROM project_invoices 
-        WHERE invoice_number LIKE 'INV-$year$month%' 
-        ORDER BY id DESC LIMIT 1
-    ");
-    
-    if ($lastInvoice) {
-        $lastNum = intval(substr($lastInvoice['invoice_number'], -4));
-        $newNum = str_pad($lastNum + 1, 4, '0', STR_PAD_LEFT);
-    } else {
-        $newNum = '0001';
+    // Validate required fields
+    $errors = [];
+    if (empty($data['client_id'])) {
+        $errors[] = 'Client is required';
+    }
+    if (empty($data['invoice_date'])) {
+        $errors[] = 'Invoice date is required';
+    }
+    if (empty($data['due_date'])) {
+        $errors[] = 'Due date is required';
+    }
+    if (empty($data['bill_to'])) {
+        $errors[] = 'Bill to address is required';
     }
     
-    return "INV-$year$month-$newNum";
+    // Validate items
+    if (empty($items)) {
+        $errors[] = 'At least one invoice item is required';
+    } else {
+        foreach ($items as $index => $item) {
+            if (empty($item['description'])) {
+                $errors[] = 'Item #' . ($index + 1) . ': Description is required';
+            }
+            if (empty($item['quantity']) || $item['quantity'] <= 0) {
+                $errors[] = 'Item #' . ($index + 1) . ': Valid quantity is required';
+            }
+            if (!isset($item['unit_price']) || $item['unit_price'] < 0) {
+                $errors[] = 'Item #' . ($index + 1) . ': Valid unit price is required';
+            }
+        }
+    }
+    
+    if (!empty($errors)) {
+        $_SESSION['flash'] = ['type' => 'error', 'message' => implode('<br>', $errors)];
+        header('Location: ' . $_SERVER['HTTP_REFERER']);
+        exit;
+    }
+    
+    if (!empty($_POST['id'])) {
+        // Update existing invoice
+        db()->update('project_invoices', $data, 'id = :id', ['id' => $_POST['id']]);
+        $invoiceId = $_POST['id'];
+        $msg = 'updated';
+        
+        // Delete existing items and re-add
+        db()->delete('invoice_items', 'invoice_id = ?', [$invoiceId]);
+    } else {
+        // Insert new invoice
+        $invoiceId = db()->insert('project_invoices', $data);
+        if (!$invoiceId) {
+            $_SESSION['flash'] = ['type' => 'error', 'message' => 'Failed to create invoice'];
+            header('Location: invoices.php?action=add');
+            exit;
+        }
+        $msg = 'created';
+    }
+    
+    // Save line items
+    foreach ($items as $index => $item) {
+        $itemQuantity = isset($item['quantity']) ? (float)$item['quantity'] : 0;
+        $itemUnitPrice = isset($item['unit_price']) ? (float)$item['unit_price'] : 0;
+        $itemDiscount = isset($item['discount']) ? (float)$item['discount'] : 0;
+        $itemTaxRate = isset($item['tax_rate']) ? (float)$item['tax_rate'] : 0;
+        
+        $itemTotal = $itemQuantity * $itemUnitPrice - $itemDiscount;
+        $itemTax = $itemTotal * ($itemTaxRate / 100);
+        
+        db()->insert('invoice_items', [
+            'invoice_id' => $invoiceId,
+            'item_type' => $item['type'] ?? 'service',
+            'description' => $item['description'] ?? '',
+            'quantity' => $itemQuantity,
+            'unit_price' => $itemUnitPrice,
+            'discount' => $itemDiscount,
+            'tax_rate' => $itemTaxRate,
+            'tax_amount' => $itemTax,
+            'total' => $itemTotal + $itemTax,
+            'sort_order' => $index
+        ]);
+    }
+    
+    // Send invoice notification if status is sent
+    if ($data['status'] === 'sent') {
+        $client = db()->fetch("SELECT * FROM clients WHERE id = ?", [$data['client_id']]);
+        if ($client) {
+            // Send email logic here
+            // mailer()->sendTemplate('invoice_created', [...]);
+        }
+    }
+    
+    // Generate PDF
+    generateInvoicePDF($invoiceId);
+    
+    // Log activity
+    logActivity('invoice', $invoiceId, 'Invoice ' . ($msg === 'created' ? 'created' : 'updated'));
+    
+    $_SESSION['flash'] = ['type' => 'success', 'message' => 'Invoice ' . ($msg === 'created' ? 'created' : 'updated') . ' successfully'];
+    header('Location: invoices.php');
+    exit;
 }
 
+function generateInvoiceNumber() {
+    $year  = date('Y');
+    $month = date('m');
+
+    // Get last invoice for this month
+    $lastInvoice = db()->fetch("
+        SELECT invoice_number FROM project_invoices
+        WHERE invoice_number LIKE 'INV-$year$month-%'
+        ORDER BY id DESC LIMIT 1
+    ");
+
+    if ($lastInvoice) {
+        $num = intval(substr($lastInvoice['invoice_number'], -4)) + 1;
+    } else {
+        $num = 1;
+    }
+
+    // Ensure uniqueness
+    while (true) {
+        $invoice = "INV-$year$month-" . str_pad($num, 4, '0', STR_PAD_LEFT);
+
+        $exists = db()->fetch(
+            "SELECT id FROM project_invoices WHERE invoice_number = ?",
+            [$invoice]
+        );
+
+        if (!$exists) {
+            return $invoice;
+        }
+
+        $num++;
+    }
+}
 // Generate PDF function
 function generateInvoicePDF($invoiceId) {
     // This would use a PDF library like Dompdf or TCPDF
@@ -984,8 +1089,6 @@ require_once 'includes/header.php';
     </div>
 <?php endif; ?>
 
-
-
 <style>
 /* ========================================
    INVOICES PAGE - RESPONSIVE STYLES
@@ -1120,8 +1223,8 @@ require_once 'includes/header.php';
 }
 
 .stat-icon.blue { background: rgba(37,99,235,0.1); color: #2563eb; }
-.stat-icon.green { background: rgba(16,185,129,0.1); color: #10b981; }
 .stat-icon.orange { background: rgba(245,158,11,0.1); color: #f59e0b; }
+.stat-icon.green { background: rgba(16,185,129,0.1); color: #10b981; }
 .stat-icon.red { background: rgba(239,68,68,0.1); color: #ef4444; }
 
 .stat-details {
@@ -1399,10 +1502,6 @@ require_once 'includes/header.php';
 
 .date-info {
     font-size: 13px;
-}
-
-.due-date {
-    color: var(--gray-600);
 }
 
 .payment-info {
@@ -2101,7 +2200,7 @@ require_once 'includes/header.php';
 <script>
 let items = [];
 
-<?php if ($invoice && !empty($invoice['items'])): ?>
+<?php if ($invoice && !empty($invoice['items']) && is_array($invoice['items'])): ?>
 items = <?php echo json_encode($invoice['items']); ?>;
 <?php endif; ?>
 
@@ -2177,16 +2276,24 @@ function renderItems() {
 }
 
 function updateItem(index, field, value) {
+    // Ensure numeric fields are numbers
+    if (['quantity', 'unit_price', 'discount', 'tax_rate'].includes(field)) {
+        value = parseFloat(value) || 0;
+    }
     items[index][field] = value;
     calculateTotals();
     renderItems();
 }
 
 function calculateItemTotal(item) {
-    const subtotal = (item.quantity || 0) * (item.unit_price || 0);
-    const discount = item.discount || 0;
+    const quantity = parseFloat(item.quantity) || 0;
+    const unitPrice = parseFloat(item.unit_price) || 0;
+    const discount = parseFloat(item.discount) || 0;
+    const taxRate = parseFloat(item.tax_rate) || 0;
+    
+    const subtotal = quantity * unitPrice;
     const afterDiscount = subtotal - discount;
-    const tax = afterDiscount * ((item.tax_rate || 0) / 100);
+    const tax = afterDiscount * (taxRate / 100);
     return afterDiscount + tax;
 }
 
@@ -2194,7 +2301,9 @@ function calculateTotals() {
     let subtotal = 0;
     
     items.forEach(item => {
-        subtotal += (item.quantity || 0) * (item.unit_price || 0);
+        const quantity = parseFloat(item.quantity) || 0;
+        const unitPrice = parseFloat(item.unit_price) || 0;
+        subtotal += quantity * unitPrice;
     });
     
     const taxRate = parseFloat(document.getElementById('tax_rate')?.value) || 0;
@@ -2213,16 +2322,29 @@ function calculateTotals() {
     const shippingAmount = parseFloat(document.getElementById('shipping_amount')?.value) || 0;
     const total = subtotal + taxAmount - discountAmount + shippingAmount;
     
+    // Update display
     document.getElementById('calc-subtotal').textContent = '$' + subtotal.toFixed(2);
     document.getElementById('calc-tax').textContent = '$' + taxAmount.toFixed(2);
     document.getElementById('calc-discount').textContent = '-$' + discountAmount.toFixed(2);
     document.getElementById('calc-total').textContent = '$' + total.toFixed(2);
     
-    document.getElementById('subtotal').value = subtotal;
-    document.getElementById('tax_amount').value = taxAmount;
-    document.getElementById('discount_amount').value = discountAmount;
-    document.getElementById('total').value = total;
-    document.getElementById('items-json').value = JSON.stringify(items);
+    // Update hidden fields
+    document.getElementById('subtotal').value = subtotal.toFixed(2);
+    document.getElementById('tax_amount').value = taxAmount.toFixed(2);
+    document.getElementById('discount_amount').value = discountAmount.toFixed(2);
+    document.getElementById('total').value = total.toFixed(2);
+    
+    // Ensure items is valid JSON before stringifying
+    const cleanItems = items.map(item => ({
+        type: item.type || 'service',
+        description: item.description || '',
+        quantity: parseFloat(item.quantity) || 1,
+        unit_price: parseFloat(item.unit_price) || 0,
+        discount: parseFloat(item.discount) || 0,
+        tax_rate: parseFloat(item.tax_rate) || 0
+    }));
+    
+    document.getElementById('items-json').value = JSON.stringify(cleanItems);
 }
 
 function loadClientDetails(clientId) {

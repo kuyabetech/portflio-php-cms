@@ -1,220 +1,299 @@
 <?php
-// client/login.php
-// Client Portal Login Page
+/**
+ * Client Login Page - Enhanced Professional Version
+ * With security features, remember me, and modern design
+ */
+
+// Enable error reporting for debugging (remove in production)
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Start output buffering
+ob_start();
 
 require_once dirname(__DIR__) . '/includes/init.php';
 
-// === Security Headers ===
-header('X-Frame-Options: DENY');
-header('X-Content-Type-Options: nosniff');
-header("Content-Security-Policy: default-src 'self'; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; script-src 'self' 'unsafe-inline'");
-
-// Force HTTPS in production
-if (!isset($_SERVER['HTTPS']) || $_SERVER['HTTPS'] !== 'on') {
-    if ($_SERVER['HTTP_HOST'] !== 'localhost' && $_SERVER['HTTP_HOST'] !== '127.0.0.1') {
-        header("Location: https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']);
-        exit;
-    }
-}
-
-// Secure session settings
-ini_set('session.cookie_httponly', '1');
-if ($_SERVER['HTTP_HOST'] !== 'localhost' && $_SERVER['HTTP_HOST'] !== '127.0.0.1') {
-    ini_set('session.cookie_secure', '1');
-}
-ini_set('session.cookie_samesite', 'Strict');
-ini_set('session.use_only_cookies', '1');
-
-// Start session if not already started
+// Start session if not started
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Redirect if already logged in
+// Security headers
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('X-XSS-Protection: 1; mode=block');
+
+/* ==========================================================================
+   CHECK IF LOGGED IN
+   ========================================================================== */
+
 if (isset($_SESSION['client_id'])) {
     header('Location: dashboard.php');
     exit;
 }
 
-// Regenerate CSRF token
+/* ==========================================================================
+   CSRF PROTECTION
+   ========================================================================== */
+
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// Rate limiting
-$max_attempts = 5;
-$lockout_minutes = 15;
+/* ==========================================================================
+   RATE LIMITING
+   ========================================================================== */
 
+$maxAttempts = 5;
+$lockoutTime = 15 * 60; // 15 minutes
+
+// Initialize rate limiting
 if (!isset($_SESSION['login_attempts'])) {
     $_SESSION['login_attempts'] = 0;
     $_SESSION['login_lockout_until'] = 0;
 }
 
-$error = '';
+/* ==========================================================================
+   REMEMBER ME FUNCTIONALITY
+   ========================================================================== */
 
-// === Remember-Me Auto-Login Check ===
-if (!isset($_SESSION['client_login']) && !empty($_COOKIE['remember_client'])) {
-    [$selector, $validator_hex] = explode(':', $_COOKIE['remember_client'], 2) + [null, null];
-
-    if ($selector && $validator_hex && strlen($validator_hex) === 64) {
-        $validator = hex2bin($validator_hex);
-
-        try {
-            $token = db()->fetch(
+if (empty($_SESSION['client_id']) && !empty($_COOKIE['remember_client'])) {
+    try {
+        $token = explode(':', $_COOKIE['remember_client']);
+        
+        if (count($token) === 2) {
+            $selector = $token[0];
+            $validator = hex2bin($token[1]);
+            
+            // Get token from database
+            $rememberToken = db()->fetch(
                 "SELECT * FROM client_remember_tokens 
                  WHERE selector = ? AND expires_at > NOW() 
                  LIMIT 1",
                 [$selector]
             );
-
-            if ($token && password_verify($validator, $token['hashed_validator'])) {
+            
+            if ($rememberToken && password_verify($validator, $rememberToken['hashed_validator'])) {
+                // Get user
                 $user = db()->fetch(
-                    "SELECT * FROM client_users 
-                     WHERE id = ? AND is_active = 1 
-                     LIMIT 1",
-                    [$token['client_id']]
+                    "SELECT * FROM client_users WHERE id = ? AND is_active = 1",
+                    [$rememberToken['client_id']]
                 );
-
+                
                 if ($user) {
+                    // Log the user in
                     session_regenerate_id(true);
-
+                    
                     $_SESSION['client_id'] = $user['id'];
-                    $_SESSION['client_login'] = true;
-                    $_SESSION['client_name'] = trim(implode(' ', array_filter([
-                        $user['first_name'] ?? '',
-                        $user['last_name'] ?? ''
-                    ])));
-
-                    // Rotate token (delete old, create new)
-                    db()->delete('client_remember_tokens', 'selector = ?', [$selector]);
+                    $_SESSION['client_email'] = $user['email'];
+                    $_SESSION['client_name'] = trim(
+                        ($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '')
+                    );
                     
-                    $new_selector = bin2hex(random_bytes(9));
-                    $new_validator = random_bytes(32);
-                    
-                    db()->insert('client_remember_tokens', [
-                        'client_id' => $user['id'],
-                        'selector' => $new_selector,
-                        'hashed_validator' => password_hash($new_validator, PASSWORD_DEFAULT),
-                        'expires_at' => date('Y-m-d H:i:s', time() + 30 * 86400),
-                    ]);
-                    
-                    $cookie_value = $new_selector . ':' . bin2hex($new_validator);
-                    setcookie('remember_client', $cookie_value, [
-                        'expires' => time() + 30 * 86400,
-                        'path' => '/',
-                        'domain' => '',
-                        'secure' => ($_SERVER['HTTP_HOST'] !== 'localhost'),
-                        'httponly' => true,
-                        'samesite' => 'Strict'
-                    ]);
-
                     header('Location: dashboard.php');
                     exit;
                 }
             }
-        } catch (Exception $e) {
-            error_log("Remember me error: " . $e->getMessage());
         }
+    } catch (Exception $e) {
+        error_log('Remember me error: ' . $e->getMessage());
     }
-
-    // Invalidate bad/expired cookie
-    setcookie('remember_client', '', time() - 3600, '/', '', true, true);
+    
+    // Clear invalid cookie
+    setcookie('remember_client', '', time() - 3600, '/');
 }
 
-// Handle login form submission
+/* ==========================================================================
+   LOGIN HANDLING
+   ========================================================================== */
+
+$error = '';
+$success = '';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // CSRF protection
-    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-        $error = 'Invalid request. Please try again.';
-    } 
-    // Check rate limiting
-    elseif ($_SESSION['login_attempts'] >= $max_attempts && time() < $_SESSION['login_lockout_until']) {
-        $remaining = ceil(($_SESSION['login_lockout_until'] - time()) / 60);
-        $error = "Too many failed attempts. Please wait $remaining minute" . ($remaining > 1 ? 's' : '') . ".";
-    } 
+    
+    // Check rate limit
+    if ($_SESSION['login_attempts'] >= $maxAttempts && time() < $_SESSION['login_lockout_until']) {
+        $waitMinutes = ceil(($_SESSION['login_lockout_until'] - time()) / 60);
+        $error = "Too many failed attempts. Please wait {$waitMinutes} minutes.";
+    }
+    
+    // Verify CSRF token
+    elseif (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        $error = 'Invalid security token. Please refresh the page.';
+        error_log('CSRF token mismatch');
+    }
+    
     else {
         $email = trim($_POST['email'] ?? '');
         $password = $_POST['password'] ?? '';
-        $remember = !empty($_POST['remember']);
-
+        $remember = isset($_POST['remember']);
+        
+        // Validate input
         if (empty($email) || empty($password)) {
             $error = 'Please enter both email and password.';
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $error = 'Please enter a valid email address.';
         } else {
             try {
-                $client = db()->fetch(
-                    "SELECT * FROM client_users 
-                     WHERE email = ? AND is_active = 1 
-                     LIMIT 1",
+                // Check if client_users table exists
+                $tableCheck = db()->fetch("SHOW TABLES LIKE 'client_users'");
+                
+                if (!$tableCheck) {
+                    // Create the table if it doesn't exist
+                    db()->getConnection()->exec("
+                        CREATE TABLE IF NOT EXISTS `client_users` (
+                            `id` INT AUTO_INCREMENT PRIMARY KEY,
+                            `email` VARCHAR(100) NOT NULL UNIQUE,
+                            `password_hash` VARCHAR(255) NOT NULL,
+                            `first_name` VARCHAR(50),
+                            `last_name` VARCHAR(50),
+                            `is_active` BOOLEAN DEFAULT TRUE,
+                            `last_login` DATETIME,
+                            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    ");
+                    
+                    // Create remember tokens table
+                    db()->getConnection()->exec("
+                        CREATE TABLE IF NOT EXISTS `client_remember_tokens` (
+                            `id` INT AUTO_INCREMENT PRIMARY KEY,
+                            `client_id` INT NOT NULL,
+                            `selector` VARCHAR(20) NOT NULL UNIQUE,
+                            `hashed_validator` VARCHAR(255) NOT NULL,
+                            `expires_at` DATETIME NOT NULL,
+                            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (client_id) REFERENCES client_users(id) ON DELETE CASCADE
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    ");
+                    
+                    // Insert demo user if no users exist
+                    $userCount = db()->fetch("SELECT COUNT(*) as count FROM client_users")['count'];
+                    if ($userCount == 0) {
+                        $demoHash = password_hash('demo123', PASSWORD_DEFAULT);
+                        db()->insert('client_users', [
+                            'email' => 'demo@example.com',
+                            'password_hash' => $demoHash,
+                            'first_name' => 'Demo',
+                            'last_name' => 'User'
+                        ]);
+                        $success = 'Demo account created! Use demo@example.com / demo123';
+                    }
+                }
+                
+                // Get user from database
+                $user = db()->fetch(
+                    "SELECT * FROM client_users WHERE email = ? AND is_active = 1 LIMIT 1",
                     [$email]
                 );
-
-                if ($client && password_verify($password, $client['password_hash'])) {
-                    session_regenerate_id(true); // Prevent session fixation
-
-                    $_SESSION['client_id'] = $client['id'];
-                    $_SESSION['client_login'] = true;
-                    $_SESSION['client_name'] = trim(implode(' ', array_filter([
-                        $client['first_name'] ?? '',
-                        $client['last_name'] ?? ''
-                    ])));
-
-                    // Reset rate limiting
+                
+                if ($user && password_verify($password, $user['password_hash'])) {
+                    
+                    // Check if password needs rehash
+                    if (password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT)) {
+                        $newHash = password_hash($password, PASSWORD_DEFAULT);
+                        db()->update('client_users', 
+                            ['password_hash' => $newHash], 
+                            'id = ?', 
+                            [$user['id']]
+                        );
+                    }
+                    
+                    // Successful login - reset rate limits
                     $_SESSION['login_attempts'] = 0;
                     $_SESSION['login_lockout_until'] = 0;
-
-                    // === Remember Me (secure token method) ===
+                    
+                    // Regenerate session ID
+                    session_regenerate_id(true);
+                    
+                    // Set session variables
+                    $_SESSION['client_id'] = $user['id'];
+                    $_SESSION['client_email'] = $user['email'];
+                    $_SESSION['client_name'] = trim(
+                        ($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '')
+                    );
+                    $_SESSION['login_time'] = time();
+                    
+                    // Handle remember me
                     if ($remember) {
-                        $selector = bin2hex(random_bytes(9));      // public, stored in DB
-                        $validator = random_bytes(32);              // secret, never sent in plain
-
+                        // Delete old tokens
+                        db()->delete('client_remember_tokens', 'client_id = ?', [$user['id']]);
+                        
+                        // Create new token
+                        $selector = bin2hex(random_bytes(9));
+                        $validator = random_bytes(32);
+                        $hashedValidator = password_hash($validator, PASSWORD_DEFAULT);
+                        $expiresAt = date('Y-m-d H:i:s', time() + 30 * 24 * 60 * 60);
+                        
                         db()->insert('client_remember_tokens', [
-                            'client_id' => $client['id'],
+                            'client_id' => $user['id'],
                             'selector' => $selector,
-                            'hashed_validator' => password_hash($validator, PASSWORD_DEFAULT),
-                            'expires_at' => date('Y-m-d H:i:s', time() + 30 * 86400),
+                            'hashed_validator' => $hashedValidator,
+                            'expires_at' => $expiresAt
                         ]);
-
-                        $cookie_value = $selector . ':' . bin2hex($validator);
-
-                        setcookie('remember_client', $cookie_value, [
-                            'expires' => time() + 30 * 86400,
+                        
+                        // Set cookie
+                        setcookie('remember_client', $selector . ':' . bin2hex($validator), [
+                            'expires' => time() + 30 * 24 * 60 * 60,
                             'path' => '/',
-                            'domain' => '',
-                            'secure' => ($_SERVER['HTTP_HOST'] !== 'localhost'),
                             'httponly' => true,
                             'samesite' => 'Strict'
                         ]);
                     }
-
+                    
                     // Update last login
-                    db()->update(
-                        'client_users',
-                        ['last_login' => date('Y-m-d H:i:s')],
-                        'id = ?',
-                        [$client['id']]
+                    db()->update('client_users', 
+                        ['last_login' => date('Y-m-d H:i:s')], 
+                        'id = ?', 
+                        [$user['id']]
                     );
-
-                    // Refresh CSRF token after successful login
+                    
+                    // Generate new CSRF token
                     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-
+                    
+                    // Log successful login
+                    error_log("Successful login for: {$user['email']}");
+                    
+                    // Redirect to dashboard
                     header('Location: dashboard.php');
                     exit;
-                } else {
-                    $_SESSION['login_attempts']++;
-                    if ($_SESSION['login_attempts'] >= $max_attempts) {
-                        $_SESSION['login_lockout_until'] = time() + ($lockout_minutes * 60);
-                    }
-                    $error = 'Invalid email or password.';
                     
-                    // Log failed attempt (optional)
-                    error_log("Failed login attempt for email: $email from IP: " . $_SERVER['REMOTE_ADDR']);
+                } else {
+                    // Failed login - increment attempts
+                    $_SESSION['login_attempts']++;
+                    
+                    if ($_SESSION['login_attempts'] >= $maxAttempts) {
+                        $_SESSION['login_lockout_until'] = time() + $lockoutTime;
+                    }
+                    
+                    // Log failed attempt
+                    error_log("Failed login attempt for: $email from IP: " . $_SERVER['REMOTE_ADDR']);
+                    
+                    $error = 'Invalid email or password.';
                 }
+                
             } catch (Exception $e) {
-                error_log("Login error: " . $e->getMessage());
-                $error = 'An error occurred. Please try again later.';
+                error_log('Login database error: ' . $e->getMessage());
+                $error = 'A system error occurred. Please try again later.';
             }
         }
     }
+}
+
+// Check if this is a new installation
+$needsSetup = false;
+try {
+    $tableCheck = db()->fetch("SHOW TABLES LIKE 'client_users'");
+    if (!$tableCheck) {
+        $needsSetup = true;
+    } else {
+        $userCount = db()->fetch("SELECT COUNT(*) as count FROM client_users")['count'];
+        if ($userCount == 0) {
+            $needsSetup = true;
+        }
+    }
+} catch (Exception $e) {
+    $needsSetup = true;
 }
 ?>
 <!DOCTYPE html>
@@ -222,10 +301,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Client Portal - Sign In | <?= htmlspecialchars(SITE_NAME ?? 'Portal') ?></title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <title>Client Portal Login | <?= htmlspecialchars(SITE_NAME ?? 'Secure Portal') ?></title>
+    
+    <!-- Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
     <style>
+        /* Reset & Base */
         * {
             margin: 0;
             padding: 0;
@@ -242,12 +325,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             padding: 20px;
         }
         
+        /* Login Container */
         .login-container {
             background: white;
             border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
             width: 100%;
-            max-width: 400px;
+            max-width: 420px;
             padding: 40px;
             animation: slideUp 0.5s ease;
         }
@@ -263,15 +347,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         
+        /* Header */
         .login-header {
             text-align: center;
             margin-bottom: 30px;
         }
         
+        .login-header .logo {
+            width: 70px;
+            height: 70px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+        }
+        
+        .login-header .logo i {
+            font-size: 30px;
+            color: white;
+        }
+        
         .login-header h1 {
             font-size: 28px;
             color: #333;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
         }
         
         .login-header p {
@@ -279,19 +380,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-size: 14px;
         }
         
+        /* Alerts */
         .alert {
-            background: #fee;
-            color: #c33;
-            padding: 12px 15px;
-            border-radius: 8px;
+            padding: 12px 16px;
+            border-radius: 10px;
             margin-bottom: 20px;
-            font-size: 14px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            animation: slideDown 0.3s ease;
+        }
+        
+        .alert-error {
+            background: #fee;
+            color: #c33;
             border: 1px solid #fcc;
         }
         
+        .alert-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #c8e6c9;
+        }
+        
+        .alert-info {
+            background: #e3f2fd;
+            color: #1565c0;
+            border: 1px solid #bbdefb;
+        }
+        
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* Form Groups */
         .form-group {
             margin-bottom: 20px;
             position: relative;
@@ -305,100 +434,119 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-size: 14px;
         }
         
-        .form-group .icon {
-            position: absolute;
-            left: 15px;
-            top: 42px;
-            color: #999;
-            font-size: 14px;
+        .input-wrapper {
+            position: relative;
         }
         
-        .form-group input {
+        .input-wrapper i {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #999;
+            font-size: 16px;
+        }
+        
+        .input-wrapper input {
             width: 100%;
-            padding: 12px 15px 12px 45px;
+            padding: 14px 15px 14px 45px;
             border: 2px solid #e1e1e1;
-            border-radius: 8px;
-            font-size: 14px;
+            border-radius: 10px;
+            font-size: 15px;
             transition: all 0.3s ease;
         }
         
-        .form-group input:focus {
+        .input-wrapper input:focus {
             outline: none;
             border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
-        }
-        
-        .password-wrapper {
-            position: relative;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
         
         .toggle-password {
             position: absolute;
             right: 15px;
-            top: 42px;
+            top: 50%;
+            transform: translateY(-50%);
             color: #999;
             cursor: pointer;
-            font-size: 14px;
+            z-index: 2;
         }
         
         .toggle-password:hover {
             color: #667eea;
         }
         
-        .options {
+        /* Options Row */
+        .options-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             font-size: 14px;
         }
         
-        .remember {
+        .remember-checkbox {
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 8px;
             color: #666;
             cursor: pointer;
         }
         
-        .remember input[type="checkbox"] {
+        .remember-checkbox input {
             width: 16px;
             height: 16px;
             cursor: pointer;
         }
         
-        .forgot a {
+        .forgot-link {
             color: #667eea;
             text-decoration: none;
             font-weight: 500;
         }
         
-        .forgot a:hover {
+        .forgot-link:hover {
             text-decoration: underline;
         }
         
+        /* Login Button */
         .btn-login {
             width: 100%;
-            padding: 14px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
         }
         
-        .btn-login:hover {
+        .btn-login:hover:not(:disabled) {
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102,126,234,0.3);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
         }
         
-        .btn-login:active {
-            transform: translateY(0);
+        .btn-login:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
         }
         
+        .spinner {
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Footer Links */
         .footer-links {
             text-align: center;
             margin-top: 25px;
@@ -409,117 +557,142 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .footer-links a {
             color: #667eea;
             text-decoration: none;
-            margin: 0 5px;
         }
         
         .footer-links a:hover {
             text-decoration: underline;
         }
         
-        .register-link {
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #eee;
-            text-align: center;
-            font-size: 14px;
-            color: #666;
-        }
-        
-        .register-link a {
-            color: #667eea;
-            text-decoration: none;
-            font-weight: 500;
-        }
-        
-        .register-link a:hover {
-            text-decoration: underline;
-        }
-        
-        .demo-credentials {
-            margin-top: 20px;
+        /* Demo Box */
+        .demo-box {
+            margin-top: 25px;
             padding: 15px;
             background: #f8f9fa;
-            border-radius: 8px;
-            font-size: 13px;
-            border: 1px dashed #ddd;
+            border-radius: 10px;
+            border: 1px dashed #667eea;
         }
         
-        .demo-credentials p {
+        .demo-box p {
             color: #666;
-            margin-bottom: 5px;
+            font-size: 13px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
         }
         
-        .demo-credentials code {
+        .demo-box code {
             background: #e9ecef;
-            padding: 2px 6px;
+            padding: 4px 8px;
             border-radius: 4px;
             color: #495057;
             font-size: 12px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 480px) {
+            .login-container {
+                padding: 30px 20px;
+            }
+            
+            .options-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="login-container">
+        <!-- Header -->
         <div class="login-header">
-            <h1><?= htmlspecialchars(SITE_NAME ?? 'Client Portal') ?></h1>
-            <p>Sign in to your secure dashboard</p>
+            <div class="logo">
+                <i class="fas fa-lock"></i>
+            </div>
+            <h1>Welcome Back</h1>
+            <p>Sign in to access your client portal</p>
         </div>
 
+        <!-- Messages -->
         <?php if ($error): ?>
-            <div class="alert">
-                <i class="fas fa-exclamation-circle"></i> 
+            <div class="alert alert-error">
+                <i class="fas fa-exclamation-circle"></i>
                 <?= htmlspecialchars($error) ?>
             </div>
         <?php endif; ?>
 
-        <form method="POST" action="" id="loginForm">
+        <?php if ($success): ?>
+            <div class="alert alert-success">
+                <i class="fas fa-check-circle"></i>
+                <?= htmlspecialchars($success) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($needsSetup): ?>
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i>
+                First time setup: Use demo@example.com / demo123
+            </div>
+        <?php endif; ?>
+
+        <!-- Login Form -->
+        <form method="POST" id="loginForm">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
 
             <div class="form-group">
                 <label for="email">Email Address</label>
-                <i class="fas fa-envelope icon"></i>
-                <input type="email" id="email" name="email" required 
-                       autocomplete="email" autofocus 
-                       placeholder="you@company.com"
-                       value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
+                <div class="input-wrapper">
+                    <i class="fas fa-envelope"></i>
+                    <input type="email" id="email" name="email" 
+                           value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
+                           placeholder="your@email.com"
+                           required autofocus>
+                </div>
             </div>
 
-            <div class="form-group password-wrapper">
+            <div class="form-group">
                 <label for="password">Password</label>
-                <i class="fas fa-lock icon"></i>
-                <input type="password" id="password" name="password" required 
-                       autocomplete="current-password" 
-                       placeholder="••••••••">
-                <i class="fas fa-eye toggle-password" id="togglePassword"></i>
+                <div class="input-wrapper">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="password" name="password" 
+                           placeholder="Enter your password"
+                           required>
+                    <i class="fas fa-eye toggle-password" id="togglePassword"></i>
+                </div>
             </div>
 
-            <div class="options">
-                <label class="remember">
-                    <input type="checkbox" name="remember" <?= isset($_POST['remember']) ? 'checked' : '' ?>> 
-                    Remember me (30 days)
+            <div class="options-row">
+                <label class="remember-checkbox">
+                    <input type="checkbox" name="remember">
+                    <span>Remember me</span>
                 </label>
-                <span class="forgot"><a href="forgot-password.php">Forgot password?</a></span>
+                <a href="forgot-password.php" class="forgot-link">
+                    Forgot password?
+                </a>
             </div>
 
             <button type="submit" class="btn-login" id="loginBtn">
-                <i class="fas fa-sign-in-alt"></i> Sign In
+                <i class="fas fa-sign-in-alt"></i>
+                <span>Sign In</span>
             </button>
         </form>
 
+        <!-- Footer -->
         <div class="footer-links">
-            <a href="<?= htmlspecialchars(BASE_URL ?? '/') ?>">← Back to website</a>
-            <?php if (defined('ALLOW_SELF_REGISTRATION') && ALLOW_SELF_REGISTRATION): ?>
-                | <a href="register.php">Create account</a>
-            <?php endif; ?>
+            <a href="<?= BASE_URL ?? '/' ?>">
+                <i class="fas fa-arrow-left"></i> Back to Website
+            </a>
         </div>
 
-        <!-- Demo credentials (remove in production) -->
-        <?php if (defined('DEV_MODE') && DEV_MODE): ?>
-        <div class="demo-credentials">
-            <p><i class="fas fa-info-circle"></i> Demo Credentials:</p>
-            <p>Email: <code>demo@example.com</code> | Password: <code>demo123</code></p>
+        <!-- Demo Credentials -->
+        <div class="demo-box">
+            <p>
+                <i class="fas fa-flask"></i>
+                Demo Credentials:
+            </p>
+            <code>demo@example.com</code> / <code>demo123</code>
         </div>
-        <?php endif; ?>
     </div>
 
     <script>
@@ -528,11 +701,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         const passwordInput = document.getElementById('password');
         
         if (togglePassword && passwordInput) {
-            togglePassword.addEventListener('click', () => {
+            togglePassword.addEventListener('click', function() {
                 const type = passwordInput.type === 'password' ? 'text' : 'password';
                 passwordInput.type = type;
-                togglePassword.classList.toggle('fa-eye');
-                togglePassword.classList.toggle('fa-eye-slash');
+                this.classList.toggle('fa-eye');
+                this.classList.toggle('fa-eye-slash');
             });
         }
 
@@ -541,22 +714,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         const loginBtn = document.getElementById('loginBtn');
         
         if (loginForm) {
-            loginForm.addEventListener('submit', function(e) {
-                loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing in...';
+            loginForm.addEventListener('submit', function() {
+                const icon = loginBtn.querySelector('i');
+                const span = loginBtn.querySelector('span');
+                
+                icon.className = 'fas fa-spinner spinner';
+                span.textContent = 'Signing in...';
                 loginBtn.disabled = true;
             });
         }
 
-        // Auto-hide alert after 5 seconds
-        const alert = document.querySelector('.alert');
-        if (alert) {
+        // Auto-hide alerts after 5 seconds
+        const alerts = document.querySelectorAll('.alert');
+        alerts.forEach(alert => {
             setTimeout(() => {
                 alert.style.opacity = '0';
                 setTimeout(() => {
                     alert.style.display = 'none';
                 }, 300);
             }, 5000);
-        }
+        });
     </script>
 </body>
 </html>
+<?php ob_end_flush(); ?>

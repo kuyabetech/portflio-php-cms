@@ -1,23 +1,18 @@
 <?php
 // admin/view-message.php
-// View Single Message - FULLY RESPONSIVE
+// Detailed message view with reply history
 
 require_once dirname(__DIR__) . '/includes/init.php';
 Auth::requireAuth();
 
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
-$pageTitle = 'View Message';
-$breadcrumbs = [
-    ['title' => 'Dashboard', 'url' => 'index.php'],
-    ['title' => 'Messages', 'url' => 'messages.php'],
-    ['title' => 'View Message']
-];
+if (!$id) {
+    header('Location: messages.php');
+    exit;
+}
 
-// Mark as read
-db()->update('contact_messages', ['is_read' => 1], 'id = :id', ['id' => $id]);
-
-// Get message
+// Get message details
 $message = db()->fetch("SELECT * FROM contact_messages WHERE id = ?", [$id]);
 
 if (!$message) {
@@ -25,900 +20,546 @@ if (!$message) {
     exit;
 }
 
-// Handle reply
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_reply'])) {
-    $reply = sanitize($_POST['reply']);
-    $subject = sanitize($_POST['subject']);
-    
-    // Send email
-    $to = $message['email'];
-    $headers = "From: " . getSetting('contact_email') . "\r\n";
-    $headers .= "Reply-To: " . getSetting('contact_email') . "\r\n";
-    $headers .= "X-Mailer: PHP/" . phpversion();
-    
-    $fullMessage = "Hello " . $message['name'] . ",\n\n";
-    $fullMessage .= $reply . "\n\n";
-    $fullMessage .= "Best regards,\n";
-    $fullMessage .= getSetting('site_name') . " Team";
-    
-    if (mail($to, $subject, $fullMessage, $headers)) {
-        db()->update('contact_messages', ['is_replied' => 1], 'id = :id', ['id' => $id]);
-        $_SESSION['flash'] = ['type' => 'success', 'message' => 'Reply sent successfully!'];
-    } else {
-        $_SESSION['flash'] = ['type' => 'error', 'message' => 'Failed to send reply. Please try again.'];
-    }
-    
-    header('Location: view-message.php?id=' . $id);
-    exit;
+// Mark as read
+if (!$message['is_read']) {
+    db()->update('contact_messages', ['is_read' => 1], 'id = :id', ['id' => $id]);
 }
 
-// Include header
+// Get reply history
+$replies = db()->fetchAll("
+    SELECT mr.*, u.username as replied_by_name 
+    FROM message_replies mr
+    LEFT JOIN users u ON mr.sent_by = u.id
+    WHERE mr.message_id = ?
+    ORDER BY mr.sent_at ASC
+", [$id]);
+
+$pageTitle = 'Message from ' . $message['name'];
 require_once 'includes/header.php';
 ?>
 
-<!-- Page Header -->
 <div class="content-header">
-    <h2>
-        <i class="fas fa-envelope-open-text"></i> Message Details
-    </h2>
+    <h1>
+        <i class="fas fa-envelope"></i> 
+        Message Details
+    </h1>
     <div class="header-actions">
+        <button class="btn btn-primary" onclick="openQuickReply(<?php echo $id; ?>, '<?php echo htmlspecialchars($message['email']); ?>', '<?php echo htmlspecialchars($message['name']); ?>', '<?php echo htmlspecialchars(addslashes($message['subject'])); ?>')">
+            <i class="fas fa-reply"></i> Reply
+        </button>
         <a href="messages.php" class="btn btn-outline">
             <i class="fas fa-arrow-left"></i> Back to Messages
-        </a>
-        <a href="?delete=<?php echo $message['id']; ?>" class="btn btn-danger" 
-           onclick="return confirm('Are you sure you want to delete this message?')">
-            <i class="fas fa-trash"></i> Delete
         </a>
     </div>
 </div>
 
-<!-- Flash Messages -->
-<?php if (isset($_SESSION['flash'])): ?>
-    <div class="alert alert-<?php echo $_SESSION['flash']['type']; ?> alert-dismissible">
-        <i class="fas <?php echo $_SESSION['flash']['type'] === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'; ?>"></i>
-        <?php echo $_SESSION['flash']['message']; ?>
-        <button class="alert-close" onclick="this.parentElement.remove()">&times;</button>
-    </div>
-    <?php unset($_SESSION['flash']); ?>
-<?php endif; ?>
-
-<!-- Message View Container -->
 <div class="message-view-container">
     <!-- Message Header -->
     <div class="message-header-card">
-        <div class="message-subject">
-            <h3><?php echo htmlspecialchars($message['subject'] ?: 'No Subject'); ?></h3>
-            <div class="message-badges">
-                <span class="status-badge <?php echo $message['is_read'] ? 'read' : 'unread'; ?>">
-                    <i class="fas <?php echo $message['is_read'] ? 'fa-envelope-open' : 'fa-envelope'; ?>"></i>
-                    <?php echo $message['is_read'] ? 'Read' : 'Unread'; ?>
-                </span>
-                <?php if (!empty($message['is_replied'])): ?>
-                <span class="status-badge replied">
-                    <i class="fas fa-reply"></i> Replied
-                </span>
+        <div class="sender-info">
+            <div class="sender-avatar">
+                <?php echo strtoupper(substr($message['name'], 0, 1)); ?>
+            </div>
+            <div class="sender-details">
+                <h2><?php echo htmlspecialchars($message['name']); ?></h2>
+                <p class="sender-contact">
+                    <a href="mailto:<?php echo $message['email']; ?>"><?php echo $message['email']; ?></a>
+                    <?php if (!empty($message['phone'])): ?>
+                    • <a href="tel:<?php echo $message['phone']; ?>"><?php echo $message['phone']; ?></a>
+                    <?php endif; ?>
+                </p>
+                <?php if (!empty($message['company'])): ?>
+                <p class="sender-company">
+                    <i class="fas fa-building"></i> <?php echo htmlspecialchars($message['company']); ?>
+                </p>
+                <?php endif; ?>
+            </div>
+            <div class="message-metadata">
+                <div class="metadata-item">
+                    <span class="label">Received:</span>
+                    <span class="value"><?php echo date('M j, Y \a\t g:i A', strtotime($message['created_at'])); ?></span>
+                </div>
+                <div class="metadata-item">
+                    <span class="label">Status:</span>
+                    <span class="value">
+                        <span class="status-badge <?php echo $message['is_read'] ? 'read' : 'unread'; ?>">
+                            <?php echo $message['is_read'] ? 'Read' : 'Unread'; ?>
+                        </span>
+                    </span>
+                </div>
+                <?php if (!empty($message['ip_address'])): ?>
+                <div class="metadata-item">
+                    <span class="label">IP Address:</span>
+                    <span class="value"><?php echo $message['ip_address']; ?></span>
+                </div>
                 <?php endif; ?>
             </div>
         </div>
         
-        <div class="message-date">
-            <i class="far fa-calendar-alt"></i>
-            <?php echo date('F j, Y', strtotime($message['created_at'])); ?>
-            <span class="message-time">
-                <i class="far fa-clock"></i>
-                <?php echo date('h:i A', strtotime($message['created_at'])); ?>
-            </span>
+        <div class="message-subject">
+            <strong>Subject:</strong> 
+            <?php echo $message['subject'] ? htmlspecialchars($message['subject']) : '<em>No Subject</em>'; ?>
         </div>
     </div>
-
-    <!-- Sender Information Grid -->
-    <div class="sender-info-grid">
-        <div class="info-card">
-            <div class="info-icon">
-                <i class="fas fa-user"></i>
-            </div>
-            <div class="info-content">
-                <span class="info-label">Name</span>
-                <span class="info-value"><?php echo htmlspecialchars($message['name']); ?></span>
-            </div>
-        </div>
-        
-        <div class="info-card">
-            <div class="info-icon">
-                <i class="fas fa-envelope"></i>
-            </div>
-            <div class="info-content">
-                <span class="info-label">Email</span>
-                <a href="mailto:<?php echo $message['email']; ?>" class="info-value">
-                    <?php echo htmlspecialchars($message['email']); ?>
-                </a>
-            </div>
-        </div>
-        
-        <?php if (!empty($message['phone'])): ?>
-        <div class="info-card">
-            <div class="info-icon">
-                <i class="fas fa-phone"></i>
-            </div>
-            <div class="info-content">
-                <span class="info-label">Phone</span>
-                <a href="tel:<?php echo $message['phone']; ?>" class="info-value">
-                    <?php echo htmlspecialchars($message['phone']); ?>
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-        
-        <?php if (!empty($message['company'])): ?>
-        <div class="info-card">
-            <div class="info-icon">
-                <i class="fas fa-building"></i>
-            </div>
-            <div class="info-content">
-                <span class="info-label">Company</span>
-                <span class="info-value"><?php echo htmlspecialchars($message['company']); ?></span>
-            </div>
-        </div>
-        <?php endif; ?>
-        
-        <?php if (!empty($message['budget_range'])): ?>
-        <div class="info-card">
-            <div class="info-icon">
-                <i class="fas fa-dollar-sign"></i>
-            </div>
-            <div class="info-content">
-                <span class="info-label">Budget Range</span>
-                <span class="info-value budget-badge"><?php echo htmlspecialchars($message['budget_range']); ?></span>
-            </div>
-        </div>
-        <?php endif; ?>
-        
-        <div class="info-card">
-            <div class="info-icon">
-                <i class="fas fa-network-wired"></i>
-            </div>
-            <div class="info-content">
-                <span class="info-label">IP Address</span>
-                <span class="info-value ip-address"><?php echo $message['ip_address']; ?></span>
-            </div>
-        </div>
-    </div>
-
-    <!-- Message Body -->
-    <div class="message-body-card">
-        <h4><i class="fas fa-comment-dots"></i> Message</h4>
-        <div class="message-content">
+    
+    <!-- Original Message -->
+    <div class="message-content-card">
+        <h3><i class="fas fa-envelope-open"></i> Original Message</h3>
+        <div class="message-body">
             <?php echo nl2br(htmlspecialchars($message['message'])); ?>
         </div>
     </div>
-
-    <!-- Quick Reply Section -->
-    <div class="quick-reply-card" id="quick-reply">
-        <div class="reply-header" onclick="toggleReplyForm()">
-            <h4><i class="fas fa-reply"></i> Quick Reply</h4>
-            <i class="fas fa-chevron-down toggle-icon" id="replyToggleIcon"></i>
+    
+    <!-- Reply History -->
+    <?php if (!empty($replies)): ?>
+    <div class="reply-history-card">
+        <h3><i class="fas fa-history"></i> Reply History</h3>
+        <div class="reply-timeline">
+            <?php foreach ($replies as $reply): ?>
+            <div class="reply-item">
+                <div class="reply-header">
+                    <div class="reply-sender">
+                        <i class="fas fa-user-circle"></i>
+                        <strong><?php echo htmlspecialchars($reply['replied_by_name'] ?? 'System'); ?></strong>
+                        <span class="reply-time"><?php echo date('M j, Y \a\t g:i A', strtotime($reply['sent_at'])); ?></span>
+                    </div>
+                </div>
+                <div class="reply-body">
+                    <?php echo nl2br(htmlspecialchars($reply['reply_message'])); ?>
+                </div>
+            </div>
+            <?php endforeach; ?>
         </div>
-        
-        <div class="reply-form-container" id="replyForm">
-            <form method="POST" class="reply-form">
-                <div class="form-group">
-                    <label for="subject">Subject</label>
-                    <input type="text" id="subject" name="subject" 
-                           value="Re: <?php echo htmlspecialchars($message['subject'] ?: 'Contact Form Submission'); ?>" 
-                           class="form-control" required>
+    </div>
+    <?php endif; ?>
+    
+    <!-- Quick Actions -->
+    <div class="quick-actions-card">
+        <h3><i class="fas fa-bolt"></i> Quick Actions</h3>
+        <div class="action-buttons-grid">
+            <a href="mailto:<?php echo $message['email']; ?>?subject=Re: <?php echo urlencode($message['subject']); ?>" class="action-button">
+                <i class="fas fa-envelope"></i>
+                <span>Email Client</span>
+            </a>
+            
+            <?php if (!empty($message['phone'])): ?>
+            <a href="tel:<?php echo $message['phone']; ?>" class="action-button">
+                <i class="fas fa-phone"></i>
+                <span>Call Client</span>
+            </a>
+            <?php endif; ?>
+            
+            <button class="action-button" onclick="openQuickReply(<?php echo $id; ?>, '<?php echo htmlspecialchars($message['email']); ?>', '<?php echo htmlspecialchars($message['name']); ?>', '<?php echo htmlspecialchars(addslashes($message['subject'])); ?>')">
+                <i class="fas fa-reply"></i>
+                <span>Quick Reply</span>
+            </button>
+            
+            <a href="?delete=<?php echo $id; ?>" class="action-button delete" onclick="return confirm('Delete this message?')">
+                <i class="fas fa-trash"></i>
+                <span>Delete</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Reply Modal (reuse from messages.php) -->
+<div class="modal" id="quickReplyModal">
+    <div class="modal-overlay" onclick="closeQuickReply()"></div>
+    <div class="modal-container modal-lg">
+        <div class="modal-header">
+            <h3><i class="fas fa-reply"></i> Quick Reply</h3>
+            <button class="close-modal" onclick="closeQuickReply()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="reply-info">
+                <div class="reply-recipient">
+                    <strong>To:</strong> <span id="replyToEmail"></span>
                 </div>
+                <div class="reply-subject">
+                    <strong>Subject:</strong> <span id="replySubject"></span>
+                </div>
+            </div>
+            
+            <form id="quickReplyForm">
+                <input type="hidden" name="message_id" id="replyMessageId">
                 
                 <div class="form-group">
-                    <label for="reply">Your Reply</label>
-                    <textarea id="reply" name="reply" rows="6" class="form-control" required 
-                              placeholder="Write your reply here...">Dear <?php echo htmlspecialchars($message['name']); ?>,
-
-
-
-Best regards,
-<?php echo htmlspecialchars($_SESSION['username'] ?? 'Admin'); ?></textarea>
+                    <label for="replyMessage">Your Reply <span class="required">*</span></label>
+                    <textarea id="replyMessage" name="reply_message" rows="6" required 
+                              placeholder="Type your reply here..." class="reply-textarea"></textarea>
                 </div>
                 
-                <div class="form-actions">
-                    <button type="submit" name="send_reply" class="btn btn-primary">
-                        <i class="fas fa-paper-plane"></i> Send Reply
-                    </button>
-                    <button type="button" class="btn btn-outline" onclick="toggleReplyForm()">
-                        Cancel
-                    </button>
+                <div class="form-group checkbox">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="send_copy" value="1" checked>
+                        <span>Send a copy to myself</span>
+                    </label>
                 </div>
             </form>
+            
+            <div class="reply-status" id="replyStatus"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeQuickReply()">Cancel</button>
+            <button class="btn btn-primary" onclick="sendQuickReply()">
+                <i class="fas fa-paper-plane"></i> Send Reply
+            </button>
         </div>
     </div>
 </div>
 
 <style>
-/* ========================================
-   VIEW MESSAGE PAGE - RESPONSIVE STYLES
-   ======================================== */
-
-:root {
-    --primary: #2563eb;
-    --success: #10b981;
-    --warning: #f59e0b;
-    --danger: #ef4444;
-    --dark: #1e293b;
-    --gray-600: #475569;
-    --gray-500: #64748b;
-    --gray-400: #94a3b8;
-    --gray-300: #cbd5e1;
-    --gray-200: #e2e8f0;
-    --gray-100: #f1f5f9;
-}
-
-/* Content Header */
-.content-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 25px;
-    flex-wrap: wrap;
-    gap: 15px;
-}
-
-.content-header h2 {
-    font-size: 1.5rem;
-    color: var(--dark);
-    margin: 0;
-}
-
-.header-actions {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-/* Buttons */
-.btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 10px 20px;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    font-weight: 500;
-    text-decoration: none;
-    transition: all 0.2s ease;
-    border: none;
-    cursor: pointer;
-}
-
-.btn-primary {
-    background: var(--primary);
-    color: white;
-}
-
-.btn-primary:hover {
-    background: #1d4ed8;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(37,99,235,0.2);
-}
-
-.btn-outline {
-    background: transparent;
-    color: var(--primary);
-    border: 2px solid var(--primary);
-}
-
-.btn-outline:hover {
-    background: var(--primary);
-    color: white;
-}
-
-.btn-danger {
-    background: var(--danger);
-    color: white;
-}
-
-.btn-danger:hover {
-    background: #dc2626;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(239,68,68,0.2);
-}
-
-/* Alert */
-.alert {
-    padding: 15px 20px;
-    border-radius: 10px;
-    margin-bottom: 25px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    animation: slideIn 0.3s ease;
-}
-
-.alert-success {
-    background: rgba(16,185,129,0.1);
-    color: #065f46;
-    border: 1px solid rgba(16,185,129,0.2);
-}
-
-.alert-error {
-    background: rgba(239,68,68,0.1);
-    color: #991b1b;
-    border: 1px solid rgba(239,68,68,0.2);
-}
-
-.alert-close {
-    margin-left: auto;
-    background: none;
-    border: none;
-    font-size: 1.2rem;
-    cursor: pointer;
-    color: inherit;
-    opacity: 0.5;
-}
-
-.alert-close:hover {
-    opacity: 1;
-}
-
-@keyframes slideIn {
-    from {
-        transform: translateY(-20px);
-        opacity: 0;
-    }
-    to {
-        transform: translateY(0);
-        opacity: 1;
-    }
-}
-
-/* Message View Container */
+/* Message View Styles */
 .message-view-container {
-    max-width: 1000px;
+    max-width: 900px;
     margin: 0 auto;
 }
 
-/* Message Header Card */
-.message-header-card {
+.message-header-card,
+.message-content-card,
+.reply-history-card,
+.quick-actions-card {
     background: white;
     border-radius: 12px;
     padding: 25px;
     margin-bottom: 20px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    border-left: 4px solid var(--primary);
 }
 
-.message-subject {
+.sender-info {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-    flex-wrap: wrap;
-    gap: 15px;
-}
-
-.message-subject h3 {
-    font-size: 1.3rem;
-    color: var(--dark);
-    margin: 0;
-    word-break: break-word;
-}
-
-.message-badges {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 5px 12px;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 500;
-}
-
-.status-badge.read {
-    background: rgba(16,185,129,0.1);
-    color: #10b981;
-}
-
-.status-badge.unread {
-    background: rgba(37,99,235,0.1);
-    color: var(--primary);
-}
-
-.status-badge.replied {
-    background: rgba(124,58,237,0.1);
-    color: #7c3aed;
-}
-
-.message-date {
-    color: var(--gray-500);
-    font-size: 0.9rem;
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    flex-wrap: wrap;
-}
-
-.message-date i {
-    margin-right: 5px;
-}
-
-.message-time {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-}
-
-/* Sender Info Grid */
-.sender-info-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 15px;
+    gap: 20px;
     margin-bottom: 20px;
+    flex-wrap: wrap;
 }
 
-.info-card {
-    background: white;
-    border-radius: 10px;
-    padding: 15px;
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    transition: transform 0.2s ease;
-}
-
-.info-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-}
-
-.info-icon {
-    width: 45px;
-    height: 45px;
-    background: rgba(37,99,235,0.1);
-    border-radius: 10px;
+.sender-avatar {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    color: white;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--primary);
-    font-size: 1.2rem;
-    flex-shrink: 0;
+    font-size: 24px;
+    font-weight: 600;
 }
 
-.info-content {
+.sender-details {
     flex: 1;
-    min-width: 0;
 }
 
-.info-label {
-    display: block;
-    font-size: 0.75rem;
-    color: var(--gray-500);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 2px;
+.sender-details h2 {
+    margin: 0 0 5px 0;
+    font-size: 24px;
 }
 
-.info-value {
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: var(--dark);
-    word-break: break-word;
+.sender-contact {
+    margin-bottom: 5px;
 }
 
-.info-value a {
-    color: var(--primary);
+.sender-contact a {
+    color: #2563eb;
     text-decoration: none;
 }
 
-.info-value a:hover {
+.sender-contact a:hover {
     text-decoration: underline;
 }
 
-.budget-badge {
-    display: inline-block;
-    padding: 3px 10px;
-    background: rgba(16,185,129,0.1);
-    color: #10b981;
-    border-radius: 20px;
-    font-size: 0.85rem;
+.sender-company {
+    color: #64748b;
+    font-size: 0.95rem;
+}
+
+.message-metadata {
+    background: #f8fafc;
+    padding: 15px;
+    border-radius: 8px;
+    min-width: 250px;
+}
+
+.metadata-item {
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+}
+
+.metadata-item:last-child {
+    margin-bottom: 0;
+}
+
+.metadata-item .label {
+    color: #64748b;
     font-weight: 500;
 }
 
-.ip-address {
-    font-family: monospace;
-    background: var(--gray-100);
-    padding: 3px 8px;
-    border-radius: 4px;
+.metadata-item .value {
+    color: #1e293b;
+    font-weight: 600;
+}
+
+.status-badge {
     display: inline-block;
-}
-
-/* Message Body Card */
-.message-body-card {
-    background: white;
+    padding: 4px 8px;
     border-radius: 12px;
-    padding: 25px;
-    margin-bottom: 25px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
 }
 
-.message-body-card h4 {
+.status-badge.read {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.status-badge.unread {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.message-subject {
+    padding-top: 15px;
+    border-top: 1px solid #e2e8f0;
     font-size: 1.1rem;
-    margin-bottom: 15px;
-    color: var(--dark);
+}
+
+.message-content-card h3,
+.reply-history-card h3,
+.quick-actions-card h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #e2e8f0;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding-bottom: 10px;
-    border-bottom: 2px solid var(--gray-200);
+    color: #1e293b;
 }
 
-.message-body-card h4 i {
-    color: var(--primary);
-}
-
-.message-content {
-    background: var(--gray-100);
+.message-body {
+    background: #f8fafc;
     padding: 25px;
-    border-radius: 10px;
-    line-height: 1.8;
-    font-size: 1rem;
+    border-radius: 8px;
+    line-height: 1.7;
     white-space: pre-wrap;
-    word-break: break-word;
-    color: var(--dark);
+    font-size: 1rem;
 }
 
-/* Quick Reply Card */
-.quick-reply-card {
-    background: white;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+.reply-timeline {
+    position: relative;
+    padding-left: 30px;
+}
+
+.reply-timeline::before {
+    content: '';
+    position: absolute;
+    left: 10px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #e2e8f0;
+}
+
+.reply-item {
+    position: relative;
+    margin-bottom: 25px;
+}
+
+.reply-item::before {
+    content: '';
+    position: absolute;
+    left: -34px;
+    top: 5px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #2563eb;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .reply-header {
-    padding: 20px 25px;
-    background: linear-gradient(135deg, #f8fafc, #ffffff);
-    border-bottom: 2px solid var(--gray-200);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
-    transition: background 0.2s ease;
+    margin-bottom: 10px;
 }
 
-.reply-header:hover {
-    background: var(--gray-100);
-}
-
-.reply-header h4 {
-    font-size: 1.1rem;
-    margin: 0;
+.reply-sender {
     display: flex;
     align-items: center;
     gap: 8px;
-    color: var(--dark);
 }
 
-.reply-header h4 i {
-    color: var(--primary);
-}
-
-.toggle-icon {
+.reply-sender i {
+    color: #2563eb;
     font-size: 1.2rem;
-    color: var(--gray-500);
-    transition: transform 0.3s ease;
 }
 
-.reply-header.active .toggle-icon {
-    transform: rotate(180deg);
+.reply-time {
+    color: #64748b;
+    font-size: 0.85rem;
+    margin-left: 10px;
 }
 
-.reply-form-container {
-    padding: 25px;
-    display: block;
-}
-
-.reply-form {
-    max-width: 800px;
-}
-
-.form-group {
-    margin-bottom: 20px;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 500;
-    color: var(--gray-700);
-    font-size: 0.9rem;
-}
-
-.form-control {
-    width: 100%;
-    padding: 12px 15px;
-    border: 2px solid var(--gray-200);
+.reply-body {
+    background: #f8fafc;
+    padding: 15px;
     border-radius: 8px;
-    font-size: 0.95rem;
-    transition: all 0.2s ease;
-    font-family: inherit;
+    margin-left: 0;
+    border-left: 3px solid #2563eb;
 }
 
-.form-control:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
-}
-
-textarea.form-control {
-    resize: vertical;
-    min-height: 150px;
-    line-height: 1.6;
-}
-
-.form-actions {
-    display: flex;
+.action-buttons-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 15px;
-    margin-top: 20px;
-    flex-wrap: wrap;
 }
 
-.form-actions .btn {
-    min-width: 150px;
+.action-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 20px;
+    background: #f8fafc;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    color: #1e293b;
+    text-decoration: none;
+    transition: all 0.2s ease;
 }
 
-/* ========================================
-   RESPONSIVE BREAKPOINTS
-   ======================================== */
+.action-button:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(37,99,235,0.15);
+}
 
-/* Tablet (768px - 1023px) */
-@media (max-width: 1023px) {
-    .sender-info-grid {
-        grid-template-columns: repeat(2, 1fr);
+.action-button i {
+    font-size: 1.5rem;
+}
+
+.action-button span {
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.action-button.delete:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .sender-info {
+        flex-direction: column;
     }
     
-    .message-subject {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-}
-
-/* Mobile Landscape (576px - 767px) */
-@media (max-width: 767px) {
-    .content-header {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    
-    .header-actions {
+    .message-metadata {
         width: 100%;
     }
     
-    .header-actions .btn {
-        flex: 1;
+    .action-buttons-grid {
+        grid-template-columns: 1fr 1fr;
     }
-    
-    .sender-info-grid {
+}
+
+@media (max-width: 480px) {
+    .action-buttons-grid {
         grid-template-columns: 1fr;
-        gap: 10px;
-    }
-    
-    .info-card {
-        padding: 12px;
-    }
-    
-    .message-header-card {
-        padding: 20px;
-    }
-    
-    .message-body-card {
-        padding: 20px;
-    }
-    
-    .message-content {
-        padding: 20px;
-        font-size: 0.95rem;
-    }
-    
-    .reply-header {
-        padding: 15px 20px;
-    }
-    
-    .reply-form-container {
-        padding: 20px;
-    }
-    
-    .form-actions {
-        flex-direction: column;
-    }
-    
-    .form-actions .btn {
-        width: 100%;
-    }
-}
-
-/* Mobile Portrait (up to 575px) */
-@media (max-width: 575px) {
-    .message-header-card {
-        padding: 15px;
-    }
-    
-    .message-subject h3 {
-        font-size: 1.1rem;
-    }
-    
-    .message-badges {
-        width: 100%;
-    }
-    
-    .status-badge {
-        flex: 1;
-        justify-content: center;
-    }
-    
-    .message-date {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 8px;
-    }
-    
-    .info-card {
-        flex-direction: column;
-        text-align: center;
-    }
-    
-    .info-icon {
-        margin: 0 auto;
-    }
-    
-    .info-content {
-        text-align: center;
-        width: 100%;
-    }
-    
-    .message-body-card {
-        padding: 15px;
-    }
-    
-    .message-content {
-        padding: 15px;
-        font-size: 0.9rem;
-    }
-    
-    .reply-header h4 {
-        font-size: 1rem;
-    }
-}
-
-/* Small Mobile (up to 375px) */
-@media (max-width: 375px) {
-    .header-actions {
-        flex-direction: column;
-    }
-    
-    .header-actions .btn {
-        width: 100%;
-    }
-    
-    .message-subject h3 {
-        font-size: 1rem;
-    }
-    
-    .status-badge {
-        font-size: 0.75rem;
-    }
-    
-    .info-value {
-        font-size: 0.85rem;
-    }
-    
-    .form-control {
-        padding: 10px 12px;
-        font-size: 0.9rem;
-    }
-}
-
-/* Print Styles */
-@media print {
-    .header-actions,
-    .quick-reply-card,
-    .alert-close,
-    .form-actions {
-        display: none !important;
-    }
-    
-    .message-view-container {
-        max-width: 100%;
     }
     
     .message-header-card,
-    .info-card,
-    .message-body-card {
-        box-shadow: none;
-        border: 1px solid #ddd;
-        break-inside: avoid;
+    .message-content-card,
+    .reply-history-card {
+        padding: 15px;
     }
     
-    .info-icon {
-        background: none;
-        color: black;
+    .sender-avatar {
+        width: 50px;
+        height: 50px;
+        font-size: 20px;
+    }
+    
+    .sender-details h2 {
+        font-size: 20px;
     }
 }
 </style>
 
 <script>
-// Toggle reply form
-function toggleReplyForm() {
-    const form = document.getElementById('replyForm');
-    const icon = document.getElementById('replyToggleIcon');
-    const header = document.querySelector('.reply-header');
+// Quick Reply Functions (same as in messages.php)
+function openQuickReply(messageId, email, name, subject) {
+    currentMessageId = messageId;
+    currentMessageEmail = email;
+    currentMessageName = name;
+    currentMessageSubject = subject;
     
-    if (form.style.display === 'none') {
-        form.style.display = 'block';
-        icon.style.transform = 'rotate(0deg)';
-        header.classList.remove('active');
-    } else {
-        form.style.display = 'none';
-        icon.style.transform = 'rotate(180deg)';
-        header.classList.add('active');
+    document.getElementById('replyMessageId').value = messageId;
+    document.getElementById('replyToEmail').textContent = `${name} <${email}>`;
+    document.getElementById('replySubject').textContent = subject ? `Re: ${subject}` : 'Re: Contact Form Message';
+    document.getElementById('replyMessage').value = '';
+    document.getElementById('replyStatus').innerHTML = '';
+    
+    document.getElementById('quickReplyModal').style.display = 'block';
+    document.body.style.overflow = 'hidden';
+}
+
+function closeQuickReply() {
+    document.getElementById('quickReplyModal').style.display = 'none';
+    document.body.style.overflow = 'auto';
+}
+
+function sendQuickReply() {
+    const replyMessage = document.getElementById('replyMessage').value.trim();
+    const sendCopy = document.querySelector('input[name="send_copy"]').checked;
+    const statusDiv = document.getElementById('replyStatus');
+    
+    if (!replyMessage) {
+        statusDiv.innerHTML = '<span style="color: #dc2626;">Please enter a reply message</span>';
+        return;
     }
-}
-
-// Auto-resize textarea
-const textarea = document.getElementById('reply');
-if (textarea) {
-    textarea.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px';
-    });
-}
-
-// Auto-hide alerts after 5 seconds
-document.querySelectorAll('.alert').forEach(alert => {
-    setTimeout(() => {
-        alert.style.opacity = '0';
-        setTimeout(() => {
-            alert.style.display = 'none';
-        }, 300);
-    }, 5000);
-});
-
-// Copy email to clipboard
-function copyEmail(email) {
-    navigator.clipboard.writeText(email).then(() => {
-        alert('Email copied to clipboard!');
-    });
-}
-
-// Format phone number as link
-document.querySelectorAll('a[href^="tel:"]').forEach(link => {
-    link.addEventListener('click', function(e) {
-        // Optional: track click
-        console.log('Phone number clicked:', this.href);
-    });
-});
-
-// Initialize on load
-document.addEventListener('DOMContentLoaded', function() {
-    // Start with reply form hidden on mobile?
-    if (window.innerWidth <= 575) {
-        const form = document.getElementById('replyForm');
-        const icon = document.getElementById('replyToggleIcon');
-        if (form && icon) {
-            form.style.display = 'none';
-            icon.style.transform = 'rotate(180deg)';
-            document.querySelector('.reply-header').classList.add('active');
+    
+    statusDiv.innerHTML = '<span style="color: #64748b;"><i class="fas fa-spinner fa-spin"></i> Sending...</span>';
+    
+    const formData = new FormData();
+    formData.append('quick_reply', '1');
+    formData.append('message_id', currentMessageId);
+    formData.append('reply_message', replyMessage);
+    formData.append('send_copy', sendCopy ? '1' : '0');
+    
+    fetch('messages.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.innerHTML = '<span style="color: #10b981;"><i class="fas fa-check-circle"></i> Reply sent successfully!</span>';
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        } else {
+            statusDiv.innerHTML = `<span style="color: #dc2626;"><i class="fas fa-exclamation-circle"></i> ${data.message}</span>`;
         }
+    })
+    .catch(error => {
+        statusDiv.innerHTML = '<span style="color: #dc2626;"><i class="fas fa-exclamation-circle"></i> Network error</span>';
+    });
+}
+
+// Close modal with Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeQuickReply();
     }
 });
+
+// Close modal when clicking overlay
+document.querySelector('.modal-overlay')?.addEventListener('click', closeQuickReply);
 </script>
 
-<?php
-// Include footer
-require_once 'includes/footer.php';
-?>
+<?php require_once 'includes/footer.php'; ?>

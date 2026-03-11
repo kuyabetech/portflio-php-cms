@@ -1,13 +1,21 @@
 <?php
 // templates/sections/contact.php
-// Clean Contact Section - No Gradients
+// Clean Contact Section - With AJAX Support
+
+// Initialize session for CSRF token
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Generate CSRF token if not exists
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 
 // Get contact information from settings
 $contact_email = getSetting('contact_email', 'hello@example.com');
 $contact_phone = getSetting('contact_phone', '+1 234 567 890');
 $contact_address = getSetting('address', 'New York, NY');
-$success_message = isset($_SESSION['contact_success']) ? $_SESSION['contact_success'] : null;
-unset($_SESSION['contact_success']);
 ?>
 
 <!-- Contact Section -->
@@ -92,41 +100,44 @@ unset($_SESSION['contact_success']);
             <div class="contact-form">
                 <h3>Send a Message</h3>
                 
-                <?php if ($success_message): ?>
-                <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i>
-                    Thank you! Your message has been sent successfully.
-                </div>
-                <?php endif; ?>
+                <!-- Alert Message Container -->
+                <div id="form-alert" class="alert" style="display: none;"></div>
                 
-                <form action="<?php echo BASE_URL; ?>/contact-handler.php" method="POST" id="contactForm">
-                    <input type="hidden" name="csrf_token" value="<?php echo function_exists('Auth::generateCSRF') ? Auth::generateCSRF() : ''; ?>">
+                <form id="contactForm" method="POST">
+                    <input type="hidden" name="csrf_token" id="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                    
+                    <!-- Honeypot fields for spam protection -->
+                    <div style="display: none;">
+                        <input type="text" name="website" autocomplete="off">
+                        <input type="text" name="url" autocomplete="off">
+                        <input type="text" name="phone" autocomplete="off">
+                    </div>
                     
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="name">Your Name *</label>
+                          
                             <input type="text" id="name" name="name" required placeholder="John Doe">
                         </div>
                         
                         <div class="form-group">
-                            <label for="email">Your Email *</label>
+                           
                             <input type="email" id="email" name="email" required placeholder="john@example.com">
                         </div>
                     </div>
                     
                     <div class="form-group">
-                        <label for="subject">Subject</label>
+                       
                         <input type="text" id="subject" name="subject" placeholder="Project Inquiry">
                     </div>
                     
                     <div class="form-group">
-                        <label for="message">Your Message *</label>
+                       
                         <textarea id="message" name="message" rows="6" required placeholder="Tell me about your project..."></textarea>
                     </div>
                     
-                    <button type="submit" class="btn-submit">
+                    <button type="submit" id="submit-btn" class="btn-submit">
                         <i class="fas fa-paper-plane"></i>
-                        Send Message
+                        <span>Send Message</span>
                     </button>
                 </form>
             </div>
@@ -140,6 +151,12 @@ unset($_SESSION['contact_success']);
     padding: 80px 0;
     background-color: #ffffff;
     border-top: 1px solid #eaeef2;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
 }
 
 .section-header {
@@ -287,6 +304,33 @@ unset($_SESSION['contact_success']);
     font-weight: 600;
 }
 
+/* Alert Message */
+.alert {
+    padding: 15px 20px;
+    border-radius: 10px;
+    margin-bottom: 25px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: slideDown 0.5s ease;
+}
+
+.alert-success {
+    background: #ecfdf5;
+    color: #059669;
+    border: 1px solid #a7f3d0;
+}
+
+.alert-error {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+}
+
+.alert i {
+    font-size: 1.2rem;
+}
+
 /* Form Groups */
 .form-row {
     display: grid;
@@ -348,38 +392,45 @@ unset($_SESSION['contact_success']);
     border: 1.5px solid #2563eb;
     width: 100%;
     justify-content: center;
+    position: relative;
 }
 
-.btn-submit:hover {
+.btn-submit:hover:not(:disabled) {
     background: #1d4ed8;
     border-color: #1d4ed8;
     transform: translateY(-2px);
     box-shadow: 0 10px 20px rgba(37, 99, 235, 0.15);
 }
 
+.btn-submit:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
 .btn-submit i {
     font-size: 1.1rem;
 }
 
-/* Alert Message */
-.alert {
-    padding: 15px 20px;
-    border-radius: 10px;
-    margin-bottom: 25px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    animation: slideDown 0.5s ease;
+.btn-submit .spinner {
+    display: none;
+    width: 20px;
+    height: 20px;
+    border: 2px solid #ffffff;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
 }
 
-.alert-success {
-    background: #ecfdf5;
-    color: #059669;
-    border: 1px solid #a7f3d0;
+.btn-submit.loading .btn-text {
+    display: none;
 }
 
-.alert i {
-    font-size: 1.2rem;
+.btn-submit.loading .spinner {
+    display: inline-block;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 
 @keyframes slideDown {
@@ -451,37 +502,110 @@ unset($_SESSION['contact_success']);
 </style>
 
 <script>
-// Contact Form Handling
+// Contact Form Handling with AJAX
 document.addEventListener('DOMContentLoaded', function() {
     const contactForm = document.getElementById('contactForm');
+    const submitBtn = document.getElementById('submit-btn');
+    const alertDiv = document.getElementById('form-alert');
+    const csrfInput = document.getElementById('csrf_token');
     
     if (contactForm) {
-        contactForm.addEventListener('submit', function(e) {
+        contactForm.addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            // Simple validation
+            // Get form data
+            const formData = new FormData(contactForm);
             const name = document.getElementById('name').value.trim();
             const email = document.getElementById('email').value.trim();
             const message = document.getElementById('message').value.trim();
             
+            // Validate form
             if (!name || !email || !message) {
-                alert('Please fill in all required fields');
+                showAlert('Please fill in all required fields', 'error');
                 return;
             }
             
             if (!isValidEmail(email)) {
-                alert('Please enter a valid email address');
+                showAlert('Please enter a valid email address', 'error');
                 return;
             }
             
-            // Submit form
-            this.submit();
+            if (message.length < 10) {
+                showAlert('Message must be at least 10 characters long', 'error');
+                return;
+            }
+            
+            // Show loading state
+            submitBtn.disabled = true;
+            submitBtn.classList.add('loading');
+            alertDiv.style.display = 'none';
+            
+            try {
+                // Send AJAX request
+                const response = await fetch('<?php echo BASE_URL; ?>/contact-handler.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Show success message
+                    showAlert(data.message, 'success');
+                    
+                    // Reset form
+                    contactForm.reset();
+                    
+                    // Update CSRF token if provided
+                    if (data.new_token) {
+                        csrfInput.value = data.new_token;
+                    }
+                } else {
+                    // Show error message
+                    showAlert(data.message, 'error');
+                    
+                    // If token error, refresh after 2 seconds
+                    if (data.message.includes('token')) {
+                        setTimeout(() => {
+                            location.reload();
+                        }, 2000);
+                    }
+                }
+            } catch (error) {
+                showAlert('Network error. Please try again.', 'error');
+                console.error('Error:', error);
+            } finally {
+                // Remove loading state
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('loading');
+            }
         });
     }
 });
 
+// Helper function to show alerts
+function showAlert(message, type) {
+    const alertDiv = document.getElementById('form-alert');
+    if (!alertDiv) return;
+    
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i> ${message}`;
+    alertDiv.style.display = 'flex';
+    
+    // Auto hide success messages after 5 seconds
+    if (type === 'success') {
+        setTimeout(() => {
+            alertDiv.style.display = 'none';
+        }, 5000);
+    }
+}
+
+// Email validation helper
 function isValidEmail(email) {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(email);
 }
+
+// Debug - log CSRF token
+console.log('CSRF Token:', document.getElementById('csrf_token')?.value);
 </script>
