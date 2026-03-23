@@ -23,54 +23,55 @@ $successMsgKey = null;
 $errors = [];
 
 switch (true) {
-   // ───────────── DELETE CLIENT ─────────────
-case isset($_GET['delete']):
-    $deleteId = (int)$_GET['delete'];
-    
-    // Check for associated projects - fixed parameter
-    $projectCount = db()->fetchColumn("SELECT COUNT(*) FROM projects WHERE client_id = ?", [$deleteId]);
+    // ───────────── DELETE CLIENT ─────────────
+    case isset($_GET['delete']):
+        $deleteId = (int)$_GET['delete'];
+        
+        // Check for associated projects
+        $projectCount = db()->fetchColumn("SELECT COUNT(*) FROM projects WHERE client_id = ?", [$deleteId]);
 
-    if ($projectCount > 0) {
-        $successMsgKey = 'has_projects';
-    } else {
-        // Delete client logo
-        $client = db()->fetch("SELECT logo FROM clients WHERE id = ?", [$deleteId]);
-        if ($client && !empty($client['logo'])) {
-            $path = UPLOAD_PATH . 'clients/' . $client['logo'];
-            if (file_exists($path)) @unlink($path);
+        if ($projectCount > 0) {
+            $successMsgKey = 'has_projects';
+        } else {
+            // Delete client logo
+            $client = db()->fetch("SELECT logo FROM clients WHERE id = ?", [$deleteId]);
+            if ($client && !empty($client['logo'])) {
+                $path = UPLOAD_PATH . 'clients/' . $client['logo'];
+                if (file_exists($path)) @unlink($path);
+            }
+            
+            // Delete client portal users
+            db()->delete('client_users', 'client_id = ?', [$deleteId]);
+            
+            // Delete client
+            db()->delete('clients', 'id = ?', [$deleteId]);
+            $successMsgKey = 'deleted';
         }
-        
-        // Delete client portal users - fixed parameter
-        db()->delete('client_users', 'client_id = ?', [$deleteId]);
-        
-        // Delete client - fixed parameter
-        db()->delete('clients', 'id = ?', [$deleteId]);
-        $successMsgKey = 'deleted';
-    }
-    $redirect = true;
-    break;
+        $redirect = true;
+        break;
 
-   // ───────────── TOGGLE STATUS ─────────────
-case isset($_GET['toggle']):
-    $toggleId = (int)$_GET['toggle'];
-    $status = db()->fetchColumn("SELECT status FROM clients WHERE id = ?", [$toggleId]);
+    // ───────────── TOGGLE STATUS ─────────────
+    case isset($_GET['toggle']):
+        $toggleId = (int)$_GET['toggle'];
+        $status = db()->fetchColumn("SELECT status FROM clients WHERE id = ?", [$toggleId]);
 
-    if ($status) {
-        $newStatus = $status === 'active' ? 'inactive' : 'active';
-        // Fixed: Using positional parameters
-        db()->update('clients', ['status' => $newStatus], 'id = ?', [$toggleId]);
-        
-        // Also update client_users status if exists - fixed parameter
-        db()->update('client_users', 
-            ['is_active' => $newStatus === 'active' ? 1 : 0], 
-            'client_id = ?', 
-            [$toggleId]
-        );
-        
-        $successMsgKey = 'updated';
-    }
-    $redirect = true;
-    break;
+        if ($status) {
+            $newStatus = $status === 'active' ? 'inactive' : 'active';
+            
+            // Update client status
+            db()->update('clients', ['status' => $newStatus], 'id = ?', [$toggleId]);
+            
+            // Also update client_users status if exists
+            db()->update('client_users', 
+                ['is_active' => $newStatus === 'active' ? 1 : 0], 
+                'client_id = ?', 
+                [$toggleId]
+            );
+            
+            $successMsgKey = 'updated';
+        }
+        $redirect = true;
+        break;
 
     // ───────────── ASSIGN PROJECT ─────────────
     case isset($_POST['assign_project']):
@@ -126,34 +127,31 @@ case isset($_GET['toggle']):
             if (empty($data['email']))          $errors[] = 'Email is required.';
             if (!filter_var($data['email'], FILTER_VALIDATE_EMAIL)) $errors[] = 'Invalid email format.';
 
-          // ───────────── DUPLICATE EMAIL CHECK ─────────────
-if (!empty($_POST['id'])) {
-    // Fixed: Using positional parameters
-    $existing = db()->fetch("SELECT id FROM clients WHERE email = ? AND id != ?", 
-        [$data['email'], $_POST['id']]);
-} else {
-    // Fixed: Using positional parameters
-    $existing = db()->fetch("SELECT id FROM clients WHERE email = ?", [$data['email']]);
-}
-if ($existing) $errors[] = 'A client with this email already exists.';
-
-        // ───────────── LOGO UPLOAD ─────────────
-if (empty($errors) && !empty($_FILES['logo']['name']) && $_FILES['logo']['error'] === UPLOAD_ERR_OK) {
-    $upload = uploadFile($_FILES['logo'], 'clients/', ['jpg','jpeg','png','gif','webp'], 4);
-    if (isset($upload['success'])) {
-        if (!empty($_POST['id'])) {
-            // Fixed: Using positional parameters
-            $old = db()->fetchColumn("SELECT logo FROM clients WHERE id = ?", [$_POST['id']]);
-            if ($old) {
-                $path = UPLOAD_PATH . 'clients/' . $old;
-                if (file_exists($path)) @unlink($path);
+            // ───────────── DUPLICATE EMAIL CHECK ─────────────
+            if (!empty($_POST['id'])) {
+                $existing = db()->fetch("SELECT id FROM clients WHERE email = ? AND id != ?", 
+                    [$data['email'], $_POST['id']]);
+            } else {
+                $existing = db()->fetch("SELECT id FROM clients WHERE email = ?", [$data['email']]);
             }
-        }
-        $data['logo'] = $upload['filename'];
-    } else {
-        $errors[] = $upload['error'] ?? 'Logo upload failed.';
-    }
-}
+            if ($existing) $errors[] = 'A client with this email already exists.';
+
+            // ───────────── LOGO UPLOAD ─────────────
+            if (empty($errors) && !empty($_FILES['logo']['name']) && $_FILES['logo']['error'] === UPLOAD_ERR_OK) {
+                $upload = uploadFile($_FILES['logo'], 'clients/', ['jpg','jpeg','png','gif','webp'], 4);
+                if (isset($upload['success'])) {
+                    if (!empty($_POST['id'])) {
+                        $old = db()->fetchColumn("SELECT logo FROM clients WHERE id = ?", [$_POST['id']]);
+                        if ($old) {
+                            $path = UPLOAD_PATH . 'clients/' . $old;
+                            if (file_exists($path)) @unlink($path);
+                        }
+                    }
+                    $data['logo'] = $upload['filename'];
+                } else {
+                    $errors[] = $upload['error'] ?? 'Logo upload failed.';
+                }
+            }
 
             // ───────────── INSERT / UPDATE ─────────────
             if (empty($errors)) {
@@ -180,29 +178,262 @@ if (empty($errors) && !empty($_FILES['logo']['name']) && $_FILES['logo']['error'
                             'created_at'    => date('Y-m-d H:i:s')
                         ]);
 
-                        // Send welcome email
-                        $subject = "Welcome to " . (SITE_NAME ?? 'Client Portal');
-                        $message = "
+                        // Send welcome email using Mailer class
+                        $subject = "Welcome to " . (defined('SITE_NAME') ? SITE_NAME : 'Client Portal');
+                        
+                        // Get company name from settings
+                        $companyName = function_exists('getSetting') ? getSetting('site_name', (defined('SITE_NAME') ? SITE_NAME : 'Client Portal')) : (defined('SITE_NAME') ? SITE_NAME : 'Client Portal');
+                        
+                        // Build HTML email body
+                        $htmlBody = "
+                        <!DOCTYPE html>
                         <html>
-                        <body style='font-family: Arial, sans-serif;'>
-                            <h2>Welcome " . htmlspecialchars($data['contact_person']) . "!</h2>
-                            <p>Your client portal account has been created.</p>
-                            <p><strong>Login credentials:</strong></p>
-                            <ul>
-                                <li>Email: " . htmlspecialchars($data['email']) . "</li>
-                                <li>Password: " . $plainPassword . "</li>
-                            </ul>
-                            <p><a href='" . BASE_URL . "/client/login.php' style='background: #4361ee; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>Login to Portal</a></p>
-                            <p>Please change your password after first login.</p>
+                        <head>
+                            <meta charset='UTF-8'>
+                            <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+                            <style>
+                                body {
+                                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                                    line-height: 1.6;
+                                    color: #1e293b;
+                                    margin: 0;
+                                    padding: 0;
+                                    background-color: #f8fafc;
+                                }
+                                .container {
+                                    max-width: 600px;
+                                    margin: 20px auto;
+                                    background: #ffffff;
+                                    border-radius: 12px;
+                                    overflow: hidden;
+                                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                                }
+                                .header {
+                                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                    color: white;
+                                    padding: 30px;
+                                    text-align: center;
+                                }
+                                .header h1 {
+                                    margin: 0;
+                                    font-size: 28px;
+                                    font-weight: 600;
+                                }
+                                .header p {
+                                    margin: 10px 0 0;
+                                    opacity: 0.9;
+                                    font-size: 16px;
+                                }
+                                .content {
+                                    padding: 30px;
+                                }
+                                .greeting {
+                                    font-size: 18px;
+                                    margin-bottom: 20px;
+                                }
+                                .credentials-box {
+                                    background: #f1f5f9;
+                                    padding: 25px;
+                                    border-radius: 8px;
+                                    margin: 25px 0;
+                                    border-left: 4px solid #667eea;
+                                }
+                                .credentials-box h3 {
+                                    margin: 0 0 15px 0;
+                                    color: #1e293b;
+                                    font-size: 18px;
+                                }
+                                .credential-item {
+                                    margin-bottom: 12px;
+                                    padding-bottom: 12px;
+                                    border-bottom: 1px solid #e2e8f0;
+                                }
+                                .credential-item:last-child {
+                                    border-bottom: none;
+                                    margin-bottom: 0;
+                                    padding-bottom: 0;
+                                }
+                                .credential-label {
+                                    font-weight: 600;
+                                    color: #475569;
+                                    display: block;
+                                    margin-bottom: 4px;
+                                    font-size: 14px;
+                                }
+                                .credential-value {
+                                    font-size: 16px;
+                                    color: #1e293b;
+                                    font-family: monospace;
+                                    background: #ffffff;
+                                    padding: 8px 12px;
+                                    border-radius: 4px;
+                                    border: 1px solid #e2e8f0;
+                                    display: inline-block;
+                                }
+                                .password-warning {
+                                    background: #fef3c7;
+                                    padding: 12px 15px;
+                                    border-radius: 6px;
+                                    margin: 15px 0;
+                                    font-size: 14px;
+                                    color: #92400e;
+                                    border-left: 3px solid #f59e0b;
+                                }
+                                .button {
+                                    display: inline-block;
+                                    background: #667eea;
+                                    color: white;
+                                    padding: 14px 30px;
+                                    text-decoration: none;
+                                    border-radius: 8px;
+                                    font-weight: 600;
+                                    font-size: 16px;
+                                    margin: 20px 0 10px;
+                                    transition: background 0.2s ease;
+                                }
+                                .button:hover {
+                                    background: #5a67d8;
+                                }
+                                .footer {
+                                    padding: 20px 30px;
+                                    border-top: 1px solid #e2e8f0;
+                                    text-align: center;
+                                    color: #94a3b8;
+                                    font-size: 14px;
+                                }
+                                .footer p {
+                                    margin: 5px 0;
+                                }
+                                .note {
+                                    font-size: 13px;
+                                    color: #64748b;
+                                    margin-top: 20px;
+                                    padding-top: 15px;
+                                    border-top: 1px solid #e2e8f0;
+                                }
+                            </style>
+                        </head>
+                        <body>
+                            <div class='container'>
+                                <div class='header'>
+                                    <h1>Welcome to " . htmlspecialchars($companyName) . "!</h1>
+                                    <p>Your client portal has been created</p>
+                                </div>
+                                
+                                <div class='content'>
+                                    <p class='greeting'>Dear " . htmlspecialchars($data['contact_person']) . ",</p>
+                                    
+                                    <p>We're excited to welcome you to our client portal! Your account has been successfully created and you can now access all our services online.</p>
+                                    
+                                    <div class='credentials-box'>
+                                        <h3>🔐 Your Login Credentials</h3>
+                                        
+                                        <div class='credential-item'>
+                                            <span class='credential-label'>📧 Email Address:</span>
+                                            <span class='credential-value'>" . htmlspecialchars($data['email']) . "</span>
+                                        </div>
+                                        
+                                        <div class='credential-item'>
+                                            <span class='credential-label'>🔑 Temporary Password:</span>
+                                            <span class='credential-value'>" . $plainPassword . "</span>
+                                        </div>
+                                        
+                                        <div class='password-warning'>
+                                            <strong>⚠️ Important:</strong> Please change your password after your first login for security reasons.
+                                        </div>
+                                    </div>
+                                    
+                                    <div style='text-align: center;'>
+                                        <a href='" . (defined('BASE_URL') ? BASE_URL : '') . "/client/login.php' class='button'>🚀 Access Your Portal</a>
+                                    </div>
+                                    
+                                    <div class='note'>
+                                        <p><strong>What you can do in the portal:</strong></p>
+                                        <ul style='color: #475569; margin-top: 5px;'>
+                                            <li>View your projects and their status</li>
+                                            <li>Communicate with our team</li>
+                                            <li>Access invoices and documents</li>
+                                            <li>Track progress in real-time</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                
+                                <div class='footer'>
+                                    <p>&copy; " . date('Y') . " " . htmlspecialchars($companyName) . ". All rights reserved.</p>
+                                    <p>If you didn't request this account, please contact us immediately.</p>
+                                </div>
+                            </div>
                         </body>
                         </html>
                         ";
                         
-                        $headers = "MIME-Version: 1.0\r\n";
-                        $headers .= "Content-type: text/html; charset=UTF-8\r\n";
-                        $headers .= "From: " . (SITE_NAME ?? 'Client Portal') . " <noreply@" . $_SERVER['HTTP_HOST'] . ">\r\n";
+                        // Build plain text version
+                        $textBody = "Dear " . $data['contact_person'] . ",\n\n";
+                        $textBody .= "Welcome to " . $companyName . "! Your client portal has been created.\n\n";
+                        $textBody .= "LOGIN CREDENTIALS:\n";
+                        $textBody .= "Email: " . $data['email'] . "\n";
+                        $textBody .= "Password: " . $plainPassword . "\n\n";
+                        $textBody .= "IMPORTANT: Please change your password after first login.\n\n";
+                        $textBody .= "Login URL: " . (defined('BASE_URL') ? BASE_URL : '') . "/client/login.php\n\n";
+                        $textBody .= "What you can do:\n";
+                        $textBody .= "- View your projects and their status\n";
+                        $textBody .= "- Communicate with our team\n";
+                        $textBody .= "- Access invoices and documents\n";
+                        $textBody .= "- Track progress in real-time\n\n";
+                        $textBody .= "Best regards,\n";
+                        $textBody .= $companyName . " Team";
                         
-                        mail($data['email'], $subject, $message, $headers);
+                        // Set reply-to options
+                        $replyTo = [
+                            'email' => function_exists('getSetting') ? getSetting('contact_email', '') : '',
+                            'name' => $companyName . ' Support'
+                        ];
+                        
+                        // Send email using Mailer class
+                        try {
+                            $mailSent = mailer()->sendHTML(
+                                $data['email'],                    // to
+                                $subject,                           // subject
+                                $htmlBody,                          // HTML body
+                                $textBody,                          // plain text body
+                                [
+                                    'reply_to' => $replyTo,        // reply-to address
+                                    'is_html' => true               // HTML format
+                                ]
+                            );
+                            
+                            if ($mailSent) {
+                                // Log success
+                                error_log("Welcome email sent successfully to: " . $data['email']);
+                            } else {
+                                error_log("Failed to send welcome email to: " . $data['email']);
+                            }
+                        } catch (Exception $e) {
+                            error_log("Welcome email error: " . $e->getMessage());
+                        }
+                        
+                        // Optional: Send a copy to admin
+                        if (function_exists('getSetting')) {
+                            $adminEmail = getSetting('admin_email', '');
+                            if (!empty($adminEmail)) {
+                                try {
+                                    mailer()->sendHTML(
+                                        $adminEmail,
+                                        'New Client Created: ' . $data['company_name'],
+                                        "<p>A new client has been created:</p>
+                                         <ul>
+                                             <li><strong>Company:</strong> " . htmlspecialchars($data['company_name']) . "</li>
+                                             <li><strong>Contact:</strong> " . htmlspecialchars($data['contact_person']) . "</li>
+                                             <li><strong>Email:</strong> " . htmlspecialchars($data['email']) . "</li>
+                                             <li><strong>Portal Login:</strong> Created</li>
+                                         </ul>",
+                                        "New Client Created:\nCompany: " . $data['company_name'] . "\nContact: " . $data['contact_person'] . "\nEmail: " . $data['email'] . "\nPortal Login: Created"
+                                    );
+                                } catch (Exception $e) {
+                                    error_log("Admin notification email error: " . $e->getMessage());
+                                }
+                            }
+                        }
                     }
                 }
                 $redirect = true;
@@ -282,6 +513,8 @@ $stats = db()->fetch("
 // ───────────── HEADER ─────────────
 require_once 'includes/header.php';
 ?>
+
+<!-- Rest of your HTML content remains the same -->
 
 <!-- Modern Admin Dashboard Styles -->
 <style>

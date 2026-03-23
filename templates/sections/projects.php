@@ -59,7 +59,7 @@
         </div>
         
         <div class="projects-cta">
-            <a href="<?php echo BASE_URL; ?>/projects" class="btn btn-outline">
+            <a href="<?php echo BASE_URL; ?>/project.php" class="btn btn-outline">
                 View All Projects <i class="fas fa-arrow-right"></i>
             </a>
         </div>

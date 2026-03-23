@@ -2,12 +2,15 @@
 // includes/functions.php
 // Core Functions - NO CONSTANTS HERE
 
-// Redirect function
 function redirect($url, $message = null, $type = 'success') {
     if ($message) {
-        $_SESSION['flash'] = ['message' => $message, 'type' => $type];
+        $_SESSION['flash'] = [
+            'message' => $message,
+            'type' => $type
+        ];
     }
-    header('Location: ' . $url);
+
+    header("Location: $url");
     exit;
 }
 

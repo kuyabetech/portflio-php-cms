@@ -57,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     // Handle logo upload
     if (isset($_FILES['site_logo']) && $_FILES['site_logo']['error'] === UPLOAD_ERR_OK) {
-        $upload = uploadFile($_FILES['site_logo'], 'settings/');
+        $upload = uploadFile($_FILES['site_logo'], 'settings');
         if (isset($upload['success'])) {
             // Delete old logo
             $oldLogo = getSetting('site_logo');
@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     // Handle favicon upload
     if (isset($_FILES['favicon']) && $_FILES['favicon']['error'] === UPLOAD_ERR_OK) {
-        $upload = uploadFile($_FILES['favicon'], 'settings/');
+        $upload = uploadFile($_FILES['favicon'], 'settings');
         if (isset($upload['success'])) {
             // Delete old favicon
             $oldFavicon = getSetting('favicon');

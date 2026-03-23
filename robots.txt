@@ -1,0 +1,27 @@
+User-agent: *
+Allow: /
+
+# Allow all crawlers access to main sections
+Allow: /about
+Allow: /projects
+Allow: /blog
+Allow: /contact
+Allow: /services
+Allow: /resources
+Allow: /hire-me
+
+# Disallow admin and private sections
+Disallow: /admin/
+Disallow: /includes/
+Disallow: /templates/
+Disallow: /vendor/
+Disallow: /temp/
+Disallow: /logs/
+Disallow: /cache/
+Disallow: /config/
+
+# Sitemap location
+Sitemap: https://yourdomain.com/sitemap.xml
+
+# Crawl delay (be polite to servers)
+Crawl-delay: 10

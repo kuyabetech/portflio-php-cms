@@ -12,6 +12,168 @@ if (defined('DEV_MODE') && DEV_MODE) {
 }
 
 /**
+ * Analytics Tracker - Integrated with your existing seo_analytics table
+ */
+class AnalyticsTracker {
+    private $db;
+    private $visitorIp;
+    private $sessionId;
+    
+    public function __construct($db) {
+        $this->db = $db;
+        $this->visitorIp = $_SERVER['REMOTE_ADDR'] ?? '';
+        $this->sessionId = session_id() ?: $this->generateSessionId();
+    }
+    
+    /**
+     * Generate a session ID if none exists
+     */
+    private function generateSessionId() {
+        $sessionId = md5($this->visitorIp . $_SERVER['HTTP_USER_AGENT'] . time());
+        return $sessionId;
+    }
+    
+    /**
+     * Track page view - matches your seo_analytics table structure
+     */
+    public function trackPageView($url, $pageType = null) {
+        try {
+            // Ensure seo_analytics table exists
+            $this->ensureTableExists();
+            
+            // Parse user agent for device and browser info
+            $deviceInfo = $this->parseUserAgent($_SERVER['HTTP_USER_AGENT'] ?? '');
+            
+            // Get referrer
+            $referrer = $_SERVER['HTTP_REFERER'] ?? '';
+            
+            // Get geolocation data (if you have IP geolocation service)
+            $location = $this->getGeoLocation($this->visitorIp);
+            
+            // Insert into seo_analytics table
+            $this->db->insert('seo_analytics', [
+                'visitor_ip' => $this->visitorIp,
+                'visit_date' => date('Y-m-d'),
+                'visit_time' => date('H:i:s'),
+                'page_url' => $url,
+                'page_type' => $pageType,
+                'referrer_url' => $referrer,
+                'device_type' => $deviceInfo['device'],
+                'browser' => $deviceInfo['browser'],
+                'os' => $deviceInfo['os'],
+                'country' => $location['country'],
+                'city' => $location['city']
+            ]);
+            
+        } catch (Exception $e) {
+            error_log("Analytics tracking error: " . $e->getMessage());
+        }
+    }
+    
+    /**
+     * Ensure the analytics table exists
+     */
+    private function ensureTableExists() {
+        $tableExists = $this->db->fetch("SHOW TABLES LIKE 'seo_analytics'");
+        
+        if (!$tableExists) {
+            // Create the table if it doesn't exist
+            $this->db->getConnection()->exec("
+                CREATE TABLE IF NOT EXISTS `seo_analytics` (
+                    `id` int(11) NOT NULL AUTO_INCREMENT,
+                    `visitor_ip` varchar(45) DEFAULT NULL,
+                    `visit_date` date NOT NULL,
+                    `visit_time` time NOT NULL,
+                    `page_url` varchar(500) NOT NULL,
+                    `page_type` varchar(50) DEFAULT NULL,
+                    `referrer_url` varchar(500) DEFAULT NULL,
+                    `device_type` varchar(20) DEFAULT NULL,
+                    `browser` varchar(50) DEFAULT NULL,
+                    `os` varchar(50) DEFAULT NULL,
+                    `country` varchar(100) DEFAULT NULL,
+                    `city` varchar(100) DEFAULT NULL,
+                    `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `idx_visit_date` (`visit_date`),
+                    KEY `idx_page_url` (`page_url`(191)),
+                    KEY `idx_visitor_ip` (`visitor_ip`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            ");
+        }
+    }
+    
+    /**
+     * Simple user agent parser
+     */
+    private function parseUserAgent($ua) {
+        $device = 'desktop';
+        $browser = 'Unknown';
+        $os = 'Unknown';
+        
+        // Detect device
+        if (preg_match('/(android|iphone|ipod|blackberry|windows phone)/i', $ua)) {
+            $device = 'mobile';
+        } elseif (preg_match('/(tablet|ipad)/i', $ua)) {
+            $device = 'tablet';
+        }
+        
+        // Detect browser
+        if (strpos($ua, 'Chrome') !== false && strpos($ua, 'Edg') === false) {
+            $browser = 'Chrome';
+        } elseif (strpos($ua, 'Firefox') !== false) {
+            $browser = 'Firefox';
+        } elseif (strpos($ua, 'Safari') !== false && strpos($ua, 'Chrome') === false) {
+            $browser = 'Safari';
+        } elseif (strpos($ua, 'Edg') !== false) {
+            $browser = 'Edge';
+        } elseif (strpos($ua, 'MSIE') !== false || strpos($ua, 'Trident') !== false) {
+            $browser = 'Internet Explorer';
+        }
+        
+        // Detect OS
+        if (strpos($ua, 'Windows') !== false) {
+            $os = 'Windows';
+        } elseif (strpos($ua, 'Mac') !== false) {
+            $os = 'macOS';
+        } elseif (strpos($ua, 'Linux') !== false) {
+            $os = 'Linux';
+        } elseif (strpos($ua, 'Android') !== false) {
+            $os = 'Android';
+        } elseif (strpos($ua, 'iOS') !== false || strpos($ua, 'iPhone') !== false || strpos($ua, 'iPad') !== false) {
+            $os = 'iOS';
+        }
+        
+        return [
+            'device' => $device,
+            'browser' => $browser,
+            'os' => $os
+        ];
+    }
+    
+    /**
+     * Get geolocation from IP (simplified - you can integrate with a service)
+     */
+    private function getGeoLocation($ip) {
+        // Skip local/private IPs
+        if ($ip === '127.0.0.1' || $ip === '::1' || strpos($ip, '192.168.') === 0) {
+            return ['country' => null, 'city' => null];
+        }
+        
+        // You can integrate with a geolocation service here
+        // For now, return null
+        return ['country' => null, 'city' => null];
+    }
+    
+    /**
+     * Track conversion (form submission)
+     */
+    public function trackConversion($email, $pageUrl) {
+        // This will be handled by contact_messages table
+        // No need to track separately as your analytics page already queries contact_messages
+    }
+}
+
+/**
  * Router class to handle all routing logic
  */
 class Router {
@@ -101,15 +263,51 @@ class Router {
  */
 class PageController {
     private $db;
+    private $analytics;
     
     public function __construct($db) {
         $this->db = $db;
+        $this->analytics = new AnalyticsTracker($db);
+    }
+    
+    /**
+     * Track page view and determine page type
+     */
+    private function trackPageView() {
+        $url = $_SERVER['REQUEST_URI'] ?? '/';
+        $pageType = $this->determinePageType($url);
+        $this->analytics->trackPageView($url, $pageType);
+    }
+    
+    /**
+     * Determine page type based on URL
+     */
+    private function determinePageType($url) {
+        if ($url === '/' || $url === '/index.php') {
+            return 'home';
+        }
+        
+        if (strpos($url, '/blog') === 0) {
+            return 'blog';
+        }
+        
+        if (strpos($url, '/project') === 0) {
+            return 'project';
+        }
+        
+        if (strpos($url, '/contact') === 0) {
+            return 'contact';
+        }
+        
+        return 'page';
     }
     
     /**
      * Display homepage
      */
     public function home() {
+        $this->trackPageView();
+        
         // Check if homepage exists in database
         $page = $this->db->fetch(
             "SELECT id FROM pages WHERE slug = ? AND status = 'published'", 
@@ -159,6 +357,7 @@ class PageController {
             return $this->notFound('Page not found');
         }
         
+        $this->trackPageView();
         $pageTitle = $page['title'];
         require 'templates/page.php';
     }
@@ -167,6 +366,8 @@ class PageController {
      * Display blog listing
      */
     public function blog() {
+        $this->trackPageView();
+        
         // Get pagination parameters
         $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
         $category = isset($_GET['category']) ? (int)$_GET['category'] : null;
@@ -265,6 +466,8 @@ class PageController {
             return $this->notFound('Blog post not found');
         }
         
+        $this->trackPageView();
+        
         // Update view count
         $this->db->update(
             'blog_posts', 
@@ -312,6 +515,7 @@ class PageController {
      * Display projects listing
      */
     public function projects() {
+        $this->trackPageView();
         $projects = getProjects(); // From your functions file
         
         $this->renderHeader();
@@ -336,6 +540,7 @@ class PageController {
             return $this->notFound('Project not found');
         }
         
+        $this->trackPageView();
         $pageTitle = $project['title'];
         
         $this->renderHeader();
@@ -351,6 +556,8 @@ class PageController {
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             return $this->handleContactSubmit();
         }
+        
+        $this->trackPageView();
         
         // Check if contact page exists in database
         $page = $this->db->fetch(
@@ -475,6 +682,9 @@ class PageController {
      * 404 Not Found handler
      */
     public function notFound($message = 'Page Not Found') {
+        // Track 404 page view
+        $this->analytics->trackPageView($_SERVER['REQUEST_URI'] ?? '/404', '404');
+        
         header("HTTP/1.0 404 Not Found");
         
         $this->renderHeader();

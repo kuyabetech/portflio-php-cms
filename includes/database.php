@@ -99,25 +99,25 @@ public function query($sql, $params = []) {
      * Update records - FIXED to handle both named and positional parameters properly
      * Use this with named parameters for the SET clause and positional for WHERE
      */
-    public function update($table, $data, $where, $whereParams = []) {
-        // Build SET clause with named parameters
-        $setFields = [];
-        foreach (array_keys($data) as $field) {
-            $setFields[] = "$field = :$field";
-        }
-        $setClause = implode(', ', $setFields);
-        
-        $sql = "UPDATE $table SET $setClause WHERE $where";
-        
-        // Merge data (named params) with where params (positional)
-        // Important: We keep them separate - named params for SET, positional for WHERE
-        $params = $data; // Named parameters
-        
-        // Add where params as positional (they will be ? in the WHERE clause)
-        // We need to convert named params to mixed? No, better to use all positional
-        // Let's create a version that uses all positional parameters for consistency
-        return $this->updatePositional($table, $data, $where, $whereParams);
+public function update($table, $data, $where, $whereParams = []) {
+    // Build SET clause with named parameters
+    $setFields = [];
+    foreach ($data as $field => $value) {
+        $setFields[] = "$field = :$field";
     }
+    $setClause = implode(', ', $setFields);
+
+    // Build WHERE clause with named params too (we prefix keys if needed)
+    $whereClause = $where; // assume $where already has named params like ":id"
+    
+    $sql = "UPDATE $table SET $setClause WHERE $whereClause";
+
+    // Merge data for SET and whereParams for WHERE
+    $params = array_merge($data, $whereParams);
+
+    // Execute the query with named parameters
+    return $this->query($sql, $params)->rowCount();
+}
     
     /**
      * Alternative update method using ONLY positional parameters (recommended)

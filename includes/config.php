@@ -1,5 +1,11 @@
 <?php
 // includes/config.php
+
+
+
+
+
+
 // Site Configuration - Works in both Admin and Frontend
 
 // Only define if not already defined
@@ -17,6 +23,18 @@ if (!defined('CONFIG_INITIALIZED')) {
     defined('DB_NAME') or define('DB_NAME', 'kverify_portfolio');
     defined('DB_USER') or define('DB_USER', 'root');
     defined('DB_PASS') or define('DB_PASS', '');
+    // Newsletter settings
+define('NEWSLETTER_CONFIRMATION', false); // Set to true for double opt-in
+define('NEWSLETTER_POPUP_DELAY', 5000); // Milliseconds before popup appears
+    
+    
+    
+    // Database
+    //define('DB_HOST', 'localhost');
+    //define('DB_NAME', 'eceklebg_kverify');
+    //define('DB_USER', 'eceklebg_mmke');           // ← change
+    //define('DB_PASS', 'Abdulx32@/@!');               // ← change
+
 
     // Site URLs - Use $_SERVER to detect base URL dynamically
     $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
@@ -45,36 +63,78 @@ if (!defined('CONFIG_INITIALIZED')) {
     defined('ADMIN_PATH') or define('ADMIN_PATH', ROOT_PATH . 'admin/');
     
     // ========================================
-    // FIXED: UPLOAD PATHS - Absolute paths from root
-    // ========================================
+// UPLOAD PATHS - Absolute paths from root
+// ========================================
+
+// Ensure ROOT_PATH and BASE_URL are defined
+defined('UPLOAD_PATH') or define('UPLOAD_PATH', rtrim(ROOT_PATH, '/') . '/assets/images/uploads/');
+defined('UPLOAD_URL') or define('UPLOAD_URL', rtrim(BASE_URL, '/') . '/assets/images/uploads/');
+
+// Helper function to define subdirectory paths and create folders
+function define_upload_subdir($name) {
+    $sub_path = UPLOAD_PATH . $name . '/';
+    $sub_url  = UPLOAD_URL  . $name . '/';
     
-    // Physical file path on server (for file operations)
-    defined('UPLOAD_PATH') or define('UPLOAD_PATH', ROOT_PATH . 'assets/images/uploads/');
+    defined('UPLOAD_PATH_' . strtoupper($name)) or define('UPLOAD_PATH_' . strtoupper($name), $sub_path);
+    defined('UPLOAD_URL_' . strtoupper($name)) or define('UPLOAD_URL_' . strtoupper($name), $sub_url);
     
-    // URL path for web access (for img src attributes)
-    defined('UPLOAD_URL') or define('UPLOAD_URL', BASE_URL . '/assets/images/uploads/');
-    
-    // Sub-directories for different upload types
-    defined('UPLOAD_PATH_PROFILES') or define('UPLOAD_PATH_PROFILES', UPLOAD_PATH . 'profiles/');
-    defined('UPLOAD_URL_PROFILES') or define('UPLOAD_URL_PROFILES', UPLOAD_URL . 'profiles/');
-    
-    defined('UPLOAD_PATH_SETTINGS') or define('UPLOAD_PATH_SETTINGS', UPLOAD_PATH . 'settings/');
-    defined('UPLOAD_URL_SETTINGS') or define('UPLOAD_URL_SETTINGS', UPLOAD_URL . 'settings/');
-    
-    defined('UPLOAD_PATH_PROJECTS') or define('UPLOAD_PATH_PROJECTS', UPLOAD_PATH . 'projects/');
-    defined('UPLOAD_URL_PROJECTS') or define('UPLOAD_URL_PROJECTS', UPLOAD_URL . 'projects/');
-    
-    defined('UPLOAD_PATH_TESTIMONIALS') or define('UPLOAD_PATH_TESTIMONIALS', UPLOAD_PATH . 'testimonials/');
-    defined('UPLOAD_URL_TESTIMONIALS') or define('UPLOAD_URL_TESTIMONIALS', UPLOAD_URL . 'testimonials/');
-    
-    defined('UPLOAD_PATH_BLOG') or define('UPLOAD_PATH_BLOG', UPLOAD_PATH . 'blog/');
-    defined('UPLOAD_URL_BLOG') or define('UPLOAD_URL_BLOG', UPLOAD_URL . 'blog/');
-    
-    defined('UPLOAD_PATH_SECTIONS') or define('UPLOAD_PATH_SECTIONS', UPLOAD_PATH . 'sections/');
-    defined('UPLOAD_URL_SECTIONS') or define('UPLOAD_URL_SECTIONS', UPLOAD_URL . 'sections/');
-    
-    defined('UPLOAD_PATH_PAGES') or define('UPLOAD_PATH_PAGES', UPLOAD_PATH . 'pages/');
-    defined('UPLOAD_URL_PAGES') or define('UPLOAD_URL_PAGES', UPLOAD_URL . 'pages/');
+    if (!is_dir($sub_path)) {
+        mkdir($sub_path, 0755, true);
+    }
+}
+
+// Define all subfolders
+$upload_dirs = ['profiles', 'settings', 'projects', 'testimonials', 'blog', 'sections', 'pages'];
+foreach ($upload_dirs as $dir) {
+    define_upload_subdir($dir);
+}
+
+// ========================================
+// UPLOAD FUNCTION - Handles all subfolders
+// ========================================
+function upload_file($file, $type) {
+    $type = strtolower($type); // normalize type
+
+    // Map type to constants
+    $path_const = 'UPLOAD_PATH_' . strtoupper($type);
+    $url_const  = 'UPLOAD_URL_' . strtoupper($type);
+
+    if (!defined($path_const) || !defined($url_const)) {
+        throw new Exception("Invalid upload type: $type");
+    }
+
+    $upload_path = constant($path_const);
+    $upload_url  = constant($url_const);
+
+    // Create unique filename
+    $filename = time() . '_' . preg_replace('/\s+/', '_', basename($file['name']));
+
+    // Move file to correct subfolder
+    if (move_uploaded_file($file['tmp_name'], $upload_path . $filename)) {
+        return [
+            'success' => true,
+            'filename' => $filename,
+            'path' => $upload_path . $filename,
+            'url' => $upload_url . $filename
+        ];
+    } else {
+        return ['success' => false, 'error' => 'Failed to upload file'];
+    }
+}
+
+// ========================================
+// USAGE EXAMPLE
+// ========================================
+/*
+if(isset($_FILES['image'])){
+    $result = upload_file($_FILES['image'], 'profiles'); // specify type
+    if($result['success']){
+        echo "File uploaded to: " . $result['url'];
+    } else {
+        echo "Error: " . $result['error'];
+    }
+}
+*/
 
     // Upload settings
     defined('MAX_FILE_SIZE') or define('MAX_FILE_SIZE', 5 * 1024 * 1024); // 5MB

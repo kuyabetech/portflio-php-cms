@@ -1,6 +1,6 @@
 <?php
 // admin/newsletter.php
-// Newsletter Management
+// Newsletter Management - Main Controller
 
 require_once dirname(__DIR__) . '/includes/init.php';
 Auth::requireAuth();
@@ -19,17 +19,18 @@ switch ($type) {
     case 'campaigns':
         $pageTitle = 'Email Campaigns';
         $breadcrumbs[] = ['title' => 'Campaigns'];
-        include 'newsletter-campaigns.php';
+        require_once 'newsletter-campaigns.php';
         break;
     case 'templates':
         $pageTitle = 'Email Templates';
         $breadcrumbs[] = ['title' => 'Templates'];
-        include 'newsletter-templates.php';
+        require_once 'newsletter-templates.php';
         break;
+    case 'subscribers':
     default:
         $pageTitle = 'Subscribers';
         $breadcrumbs[] = ['title' => 'Subscribers'];
-        include 'newsletter-subscribers.php';
+        require_once 'newsletter-subscribers.php';
         break;
 }
 ?>

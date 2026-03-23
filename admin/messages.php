@@ -1,7 +1,7 @@
 <?php
 /**
  * Admin Messages Management - Communicate with Clients
- * FULLY RESPONSIVE WITH WORKING MESSAGE VIEW
+ * FULLY RESPONSIVE WITH WORKING CONTACT MESSAGES AND EMAIL REPLIES
  */
 
 require_once dirname(__DIR__) . '/includes/init.php';
@@ -11,7 +11,7 @@ $pageTitle = 'Message Management';
 $action = $_GET['action'] ?? 'list';
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
-// Handle reply to client
+// Handle reply to client (from client_messages table)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_to_client'])) {
     $messageId = (int)$_POST['message_id'];
     $replyMessage = trim($_POST['reply_message']);
@@ -46,7 +46,233 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_to_client'])) {
             $_SESSION['flash'] = ['type' => 'error', 'message' => 'Failed to send reply'];
         }
     }
-    header('Location: messages.php?view=' . $messageId);
+    header('Location: messages.php?view=' . $messageId . '&type=client');
+    exit;
+}
+
+/**
+ * Handle reply to contact with email sending using Mailer class
+ */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_to_contact'])) {
+    $messageId = (int)$_POST['message_id'];
+    $replyMessage = trim($_POST['reply_message']);
+    $sendCopy = isset($_POST['send_copy']) ? true : false;
+    
+    // Get original message
+    $original = db()->fetch("SELECT * FROM contact_messages WHERE id = ?", [$messageId]);
+    
+    if ($original && !empty($replyMessage)) {
+        try {
+            // Mark as read
+            db()->query("UPDATE contact_messages SET is_read = ? WHERE id = ?", [1, $messageId]);
+            
+            // Log the reply
+            db()->insert('message_replies', [
+                'message_id' => $messageId,
+                'reply_message' => $replyMessage,
+                'sent_at' => date('Y-m-d H:i:s'),
+                'sent_by' => $_SESSION['user_id']
+            ]);
+            
+            // Prepare email content
+            $subject = $original['subject'] ? 'Re: ' . $original['subject'] : 'Reply to your contact message';
+            
+            // Get company name from settings
+            $companyName = getSetting('site_name', SITE_NAME);
+            $contactEmail = getSetting('contact_email', '');
+            
+            // Build HTML email body
+            $htmlBody = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset='UTF-8'>
+                <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                        line-height: 1.6;
+                        color: #1e293b;
+                        margin: 0;
+                        padding: 0;
+                        background-color: #f8fafc;
+                    }
+                    .container {
+                        max-width: 600px;
+                        margin: 20px auto;
+                        background: #ffffff;
+                        border-radius: 12px;
+                        overflow: hidden;
+                        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                    }
+                    .header {
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                        padding: 30px;
+                        text-align: center;
+                    }
+                    .header h1 {
+                        margin: 0;
+                        font-size: 24px;
+                        font-weight: 600;
+                    }
+                    .content {
+                        padding: 30px;
+                    }
+                    .greeting {
+                        font-size: 16px;
+                        margin-bottom: 20px;
+                    }
+                    .reply-box {
+                        background: #f1f5f9;
+                        padding: 20px;
+                        border-radius: 8px;
+                        margin: 20px 0;
+                        border-left: 4px solid #667eea;
+                    }
+                    .reply-box p {
+                        margin: 0;
+                        font-size: 16px;
+                        color: #1e293b;
+                        line-height: 1.6;
+                    }
+                    .original-message {
+                        background: #f8fafc;
+                        padding: 20px;
+                        border-radius: 8px;
+                        margin: 20px 0;
+                        border: 1px solid #e2e8f0;
+                    }
+                    .original-message h3 {
+                        margin: 0 0 10px 0;
+                        font-size: 16px;
+                        color: #475569;
+                        font-weight: 600;
+                    }
+                    .original-message p {
+                        margin: 0;
+                        color: #64748b;
+                    }
+                    .original-message .sent-date {
+                        margin-top: 10px;
+                        font-size: 12px;
+                        color: #94a3b8;
+                    }
+                    .footer {
+                        padding: 20px 30px;
+                        border-top: 1px solid #e2e8f0;
+                        text-align: center;
+                        color: #94a3b8;
+                        font-size: 14px;
+                    }
+                    .signature {
+                        margin-top: 30px;
+                        padding-top: 20px;
+                        border-top: 1px solid #e2e8f0;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class='container'>
+                    <div class='header'>
+                        <h1>" . htmlspecialchars($companyName) . "</h1>
+                    </div>
+                    
+                    <div class='content'>
+                        <p class='greeting'>Dear " . htmlspecialchars($original['name']) . ",</p>
+                        
+                        <p>Thank you for contacting us. Here's our response to your inquiry:</p>
+                        
+                        <div class='reply-box'>
+                            " . nl2br(htmlspecialchars($replyMessage)) . "
+                        </div>
+                        
+                        <p>If you have any further questions, please don't hesitate to contact us again.</p>
+                        
+                        <div class='signature'>
+                            <p>Best regards,<br>
+                            <strong>" . htmlspecialchars($companyName) . " Team</strong></p>
+                        </div>
+                        
+                        <div class='original-message'>
+                            <h3>Your original message:</h3>
+                            <p>" . nl2br(htmlspecialchars($original['message'])) . "</p>
+                            <p class='sent-date'>Sent on: " . date('F j, Y \a\t g:i A', strtotime($original['created_at'])) . "</p>
+                        </div>
+                    </div>
+                    
+                    <div class='footer'>
+                        <p>&copy; " . date('Y') . " " . htmlspecialchars($companyName) . ". All rights reserved.</p>
+                        <p style='margin-top: 10px; font-size: 12px;'>
+                            This email was sent in response to your contact form submission.
+                        </p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+            
+            // Build plain text version
+            $textBody = "Dear " . $original['name'] . ",\n\n";
+            $textBody .= "Thank you for contacting us. Here's our response to your inquiry:\n\n";
+            $textBody .= $replyMessage . "\n\n";
+            $textBody .= "If you have any further questions, please don't hesitate to contact us again.\n\n";
+            $textBody .= "Best regards,\n";
+            $textBody .= $companyName . " Team\n\n";
+            $textBody .= "---\n";
+            $textBody .= "Your original message:\n";
+            $textBody .= $original['message'] . "\n";
+            $textBody .= "Sent on: " . date('F j, Y \a\t g:i A', strtotime($original['created_at']));
+            
+            // Set reply-to options
+            $replyTo = [
+                'email' => !empty($contactEmail) ? $contactEmail : getSetting('smtp_from_email', ''),
+                'name' => $companyName . ' Support'
+            ];
+            
+            // Send email using Mailer class
+            $mailSent = mailer()->sendHTML(
+                $original['email'],                    // to
+                $subject,                               // subject
+                $htmlBody,                              // HTML body
+                $textBody,                              // plain text body
+                [
+                    'reply_to' => $replyTo,            // reply-to address
+                    'is_html' => true                   // HTML format
+                ]
+            );
+            
+            if ($mailSent) {
+                $_SESSION['flash'] = ['type' => 'success', 'message' => 'Reply sent successfully to ' . $original['email']];
+                
+                // Send a copy to admin if requested
+                if ($sendCopy) {
+                    $adminEmail = getSetting('admin_email', '');
+                    if (!empty($adminEmail)) {
+                        mailer()->sendHTML(
+                            $adminEmail,
+                            'Copy: ' . $subject,
+                            $htmlBody,
+                            $textBody,
+                            ['reply_to' => $replyTo]
+                        );
+                    }
+                }
+            } else {
+                // Email failed but we still logged the reply
+                $_SESSION['flash'] = ['type' => 'warning', 'message' => 'Reply logged but email delivery failed. Please check email settings.'];
+                error_log("Failed to send email reply to contact: " . $original['email']);
+            }
+            
+        } catch (Exception $e) {
+            error_log("Contact reply error: " . $e->getMessage());
+            $_SESSION['flash'] = ['type' => 'error', 'message' => 'Failed to send reply: ' . $e->getMessage()];
+        }
+    } else {
+        $_SESSION['flash'] = ['type' => 'error', 'message' => 'Invalid message or empty reply'];
+    }
+    
+    header('Location: messages.php?view=' . $messageId . '&type=contact');
     exit;
 }
 
@@ -54,14 +280,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_to_client'])) {
 if (isset($_GET['mark_client_read']) && isset($_GET['id'])) {
     $messageId = (int)$_GET['id'];
     db()->query("UPDATE client_messages SET status = ? WHERE id = ?", ['read', $messageId]);
-    header('Location: messages.php' . (isset($_GET['view']) ? '?view=' . $_GET['view'] : ''));
+    header('Location: messages.php' . (isset($_GET['view']) ? '?view=' . $_GET['view'] . '&type=client' : ''));
     exit;
 }
 
 if (isset($_GET['mark_client_unread']) && isset($_GET['id'])) {
     $messageId = (int)$_GET['id'];
     db()->query("UPDATE client_messages SET status = ? WHERE id = ?", ['unread', $messageId]);
-    header('Location: messages.php' . (isset($_GET['view']) ? '?view=' . $_GET['view'] : ''));
+    header('Location: messages.php' . (isset($_GET['view']) ? '?view=' . $_GET['view'] . '&type=client' : ''));
     exit;
 }
 
@@ -70,7 +296,7 @@ if (isset($_GET['read'])) {
     $id = (int)$_GET['read'];
     db()->query("UPDATE contact_messages SET is_read = ? WHERE id = ?", [1, $id]);
     $_SESSION['flash'] = ['type' => 'success', 'message' => 'Message marked as read'];
-    header('Location: messages.php');
+    header('Location: messages.php' . (isset($_GET['view']) ? '?view=' . $_GET['view'] . '&type=contact' : ''));
     exit;
 }
 
@@ -78,13 +304,18 @@ if (isset($_GET['unread'])) {
     $id = (int)$_GET['unread'];
     db()->query("UPDATE contact_messages SET is_read = ? WHERE id = ?", [0, $id]);
     $_SESSION['flash'] = ['type' => 'success', 'message' => 'Message marked as unread'];
-    header('Location: messages.php');
+    header('Location: messages.php' . (isset($_GET['view']) ? '?view=' . $_GET['view'] . '&type=contact' : ''));
     exit;
 }
 
 if (isset($_GET['delete_contact'])) {
     $id = (int)$_GET['delete_contact'];
+    
+    // Delete replies first
+    db()->query("DELETE FROM message_replies WHERE message_id = ?", [$id]);
+    // Delete message
     db()->query("DELETE FROM contact_messages WHERE id = ?", [$id]);
+    
     $_SESSION['flash'] = ['type' => 'success', 'message' => 'Message deleted'];
     header('Location: messages.php');
     exit;
@@ -95,6 +326,7 @@ if (isset($_GET['delete_client'])) {
     
     // Get the view message ID before deleting
     $viewMessageId = isset($_GET['view']) ? (int)$_GET['view'] : 0;
+    $viewType = isset($_GET['type']) ? $_GET['type'] : 'client';
     
     db()->query("DELETE FROM client_messages WHERE id = ?", [$id]);
     $_SESSION['flash'] = ['type' => 'success', 'message' => 'Message deleted'];
@@ -103,7 +335,7 @@ if (isset($_GET['delete_client'])) {
     if ($viewMessageId == $id) {
         header('Location: messages.php');
     } else {
-        header('Location: messages.php' . ($viewMessageId ? '?view=' . $viewMessageId : ''));
+        header('Location: messages.php' . ($viewMessageId ? '?view=' . $viewMessageId . '&type=' . $viewType : ''));
     }
     exit;
 }
@@ -121,6 +353,7 @@ $stats = [
 $filter = $_GET['filter'] ?? 'all';
 $search = $_GET['search'] ?? '';
 $viewMessageId = isset($_GET['view']) ? (int)$_GET['view'] : 0;
+$viewType = isset($_GET['type']) ? $_GET['type'] : 'client';
 
 // Get client messages with client info
 $clientMessages = [];
@@ -188,11 +421,11 @@ if ($filter === 'all' || $filter === 'contact' || $filter === 'unread_contact') 
     $contactMessages = db()->fetchAll($query, $params);
 }
 
-// Get conversation if viewing a specific thread
+// Get conversation if viewing a specific thread (for client messages)
 $conversation = [];
 $mainMessage = null;
 
-if ($viewMessageId > 0) {
+if ($viewMessageId > 0 && $viewType === 'client') {
     // First, get the main message
     $mainMessage = db()->fetch("
         SELECT cm.*, cu.first_name, cu.last_name, cu.email, cu.company, cu.id as client_user_id
@@ -211,7 +444,7 @@ if ($viewMessageId > 0) {
         $subject = $mainMessage['subject'];
         $baseSubject = preg_replace('/^Re:\s*/i', '', $subject);
         
-        // Get all messages in this conversation (by same client and similar subject)
+        // Get all messages in this conversation
         $conversation = db()->fetchAll("
             SELECT cm.*, 
                    cu.first_name, cu.last_name,
@@ -269,6 +502,25 @@ if ($viewMessageId > 0) {
     }
 }
 
+// Get contact message details if viewing a contact message
+$contactDetail = null;
+$contactReplies = [];
+if ($viewMessageId > 0 && $viewType === 'contact') {
+    $contactDetail = db()->fetch("SELECT * FROM contact_messages WHERE id = ?", [$viewMessageId]);
+    
+    // Mark as read
+    if ($contactDetail && !$contactDetail['is_read']) {
+        db()->query("UPDATE contact_messages SET is_read = ? WHERE id = ?", [1, $viewMessageId]);
+        $contactDetail['is_read'] = 1;
+    }
+    
+    // Get replies for this contact message
+    $contactReplies = db()->fetchAll("
+        SELECT * FROM message_replies 
+        WHERE message_id = ? 
+        ORDER BY sent_at ASC
+    ", [$viewMessageId]);
+}
 
 
 // Include header
@@ -418,13 +670,13 @@ require_once 'includes/header.php';
                 </h3>
                 <div class="header-filters">
                     <?php if ($filter !== 'contact' && $filter !== 'unread_contact'): ?>
-                    <select class="filter-select" onchange="window.location.href='?filter='+this.value<?php echo !empty($search) ? '+&search='.urlencode($search) : ''; ?><?php echo $viewMessageId ? '+&view='.$viewMessageId : ''; ?>">
+                    <select class="filter-select" onchange="window.location.href='?filter='+this.value<?php echo !empty($search) ? '+&search='.urlencode($search) : ''; ?><?php echo $viewMessageId ? '+&view='.$viewMessageId.'&type=client' : ''; ?>">
                         <option value="client" <?php echo $filter === 'client' ? 'selected' : ''; ?>>Client Messages</option>
                         <option value="unread_client" <?php echo $filter === 'unread_client' ? 'selected' : ''; ?>>Unread Client</option>
                     </select>
                     <?php endif; ?>
                     <?php if ($filter !== 'client' && $filter !== 'unread_client'): ?>
-                    <select class="filter-select" onchange="window.location.href='?filter='+this.value<?php echo !empty($search) ? '+&search='.urlencode($search) : ''; ?><?php echo $viewMessageId ? '+&view='.$viewMessageId : ''; ?>">
+                    <select class="filter-select" onchange="window.location.href='?filter='+this.value<?php echo !empty($search) ? '+&search='.urlencode($search) : ''; ?><?php echo $viewMessageId ? '+&view='.$viewMessageId.'&type=contact' : ''; ?>">
                         <option value="contact" <?php echo $filter === 'contact' ? 'selected' : ''; ?>>Contact Messages</option>
                         <option value="unread_contact" <?php echo $filter === 'unread_contact' ? 'selected' : ''; ?>>Unread Contact</option>
                     </select>
@@ -438,11 +690,11 @@ require_once 'includes/header.php';
                     <?php if (!empty($clientMessages)): ?>
                         <?php foreach ($clientMessages as $message): 
                             $isUnread = $message['status'] === 'unread' && $message['sender'] === 'client';
-                            $isActive = $viewMessageId == $message['id'];
+                            $isActive = $viewMessageId == $message['id'] && $viewType === 'client';
                             $clientName = $message['first_name'] . ' ' . $message['last_name'];
                             $timeAgo = timeAgo($message['created_at']);
                         ?>
-                        <a href="?view=<?php echo $message['id']; ?>&filter=<?php echo $filter; ?><?php echo !empty($search) ? '&search='.urlencode($search) : ''; ?>" 
+                        <a href="?view=<?php echo $message['id']; ?>&type=client&filter=<?php echo $filter; ?><?php echo !empty($search) ? '&search='.urlencode($search) : ''; ?>" 
                            class="message-list-item client-message <?php echo $isUnread ? 'unread' : ''; ?> <?php echo $isActive ? 'active' : ''; ?>"
                            data-message-id="<?php echo $message['id']; ?>">
                             <div class="message-icon">
@@ -490,18 +742,18 @@ require_once 'includes/header.php';
                             
                             <div class="message-actions">
                                 <?php if ($isUnread): ?>
-                                <a href="?mark_client_read=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>" 
+                                <a href="?mark_client_read=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>&type=client" 
                                    class="action-icon" title="Mark as Read" onclick="event.stopPropagation()">
                                     <i class="fas fa-check"></i>
                                 </a>
                                 <?php else: ?>
-                                <a href="?mark_client_unread=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>" 
+                                <a href="?mark_client_unread=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>&type=client" 
                                    class="action-icon" title="Mark as Unread" onclick="event.stopPropagation()">
                                     <i class="fas fa-envelope"></i>
                                 </a>
                                 <?php endif; ?>
                                 
-                                <a href="?delete_client=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>" 
+                                <a href="?delete_client=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>&type=client" 
                                    class="action-icon delete" title="Delete" 
                                    onclick="event.stopPropagation(); return confirm('Delete this message?')">
                                     <i class="fas fa-trash"></i>
@@ -517,9 +769,11 @@ require_once 'includes/header.php';
                     <?php if (!empty($contactMessages)): ?>
                         <?php foreach ($contactMessages as $message): 
                             $isUnread = !$message['is_read'];
+                            $isActive = $viewMessageId == $message['id'] && $viewType === 'contact';
                             $timeAgo = timeAgo($message['created_at']);
                         ?>
-                        <div class="message-list-item contact-message <?php echo $isUnread ? 'unread' : ''; ?>">
+                        <a href="?view=<?php echo $message['id']; ?>&type=contact&filter=<?php echo $filter; ?><?php echo !empty($search) ? '&search='.urlencode($search) : ''; ?>" 
+                           class="message-list-item contact-message <?php echo $isUnread ? 'unread' : ''; ?> <?php echo $isActive ? 'active' : ''; ?>">
                             <div class="message-icon">
                                 <i class="fas fa-globe"></i>
                                 <?php if ($isUnread): ?>
@@ -554,22 +808,22 @@ require_once 'includes/header.php';
                             
                             <div class="message-actions">
                                 <?php if ($isUnread): ?>
-                                <a href="?read=<?php echo $message['id']; ?>" class="action-icon" title="Mark as Read">
+                                <a href="?read=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>&type=contact" class="action-icon" title="Mark as Read" onclick="event.stopPropagation()">
                                     <i class="fas fa-check"></i>
                                 </a>
                                 <?php else: ?>
-                                <a href="?unread=<?php echo $message['id']; ?>" class="action-icon" title="Mark as Unread">
+                                <a href="?unread=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>&type=contact" class="action-icon" title="Mark as Unread" onclick="event.stopPropagation()">
                                     <i class="fas fa-envelope"></i>
                                 </a>
                                 <?php endif; ?>
                                 
-                                <a href="?delete_contact=<?php echo $message['id']; ?>" 
+                                <a href="?delete_contact=<?php echo $message['id']; ?>&view=<?php echo $viewMessageId; ?>&type=contact" 
                                    class="action-icon delete" title="Delete" 
-                                   onclick="return confirm('Delete this contact message?')">
+                                   onclick="event.stopPropagation(); return confirm('Delete this contact message?')">
                                     <i class="fas fa-trash"></i>
                                 </a>
                             </div>
-                        </div>
+                        </a>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 <?php endif; ?>
@@ -588,7 +842,8 @@ require_once 'includes/header.php';
 
         <!-- Conversation Column -->
         <div class="conversation-column" id="conversationColumn">
-            <?php if (!empty($conversation) && $mainMessage): ?>
+            <?php if ($viewType === 'client' && !empty($conversation) && $mainMessage): ?>
+                <!-- Client Message Conversation -->
                 <!-- Mobile Back Button -->
                 <div class="mobile-back-btn" onclick="goBackToList()">
                     <i class="fas fa-arrow-left"></i> Back to messages
@@ -647,7 +902,7 @@ require_once 'includes/header.php';
                     <?php endforeach; ?>
                 </div>
                 
-                <!-- Reply Form -->
+                <!-- Reply Form for Client -->
                 <div class="reply-form" id="replyForm" style="display: none;">
                     <form method="POST">
                         <input type="hidden" name="message_id" value="<?php echo $viewMessageId; ?>">
@@ -662,12 +917,114 @@ require_once 'includes/header.php';
                         </div>
                     </form>
                 </div>
+                
+            <?php elseif ($viewType === 'contact' && $contactDetail): ?>
+                <!-- Contact Message Detail -->
+                <!-- Mobile Back Button -->
+                <div class="mobile-back-btn" onclick="goBackToList()">
+                    <i class="fas fa-arrow-left"></i> Back to messages
+                </div>
+                
+                <!-- Contact Message Header -->
+                <div class="conversation-header">
+                    <div class="conversation-header-content">
+                        <h2><?php echo $contactDetail['subject'] ? htmlspecialchars($contactDetail['subject']) : 'Contact Form Message'; ?></h2>
+                        <div class="client-info">
+                            <div class="client-avatar">
+                                <i class="fas fa-user-circle"></i>
+                            </div>
+                            <div class="client-details">
+                                <strong><?php echo htmlspecialchars($contactDetail['name']); ?></strong>
+                                <?php if (!empty($contactDetail['company'])): ?>
+                                <span class="company">(<?php echo htmlspecialchars($contactDetail['company']); ?>)</span>
+                                <?php endif; ?>
+                                <a href="mailto:<?php echo $contactDetail['email']; ?>" class="email-link">
+                                    <i class="fas fa-envelope"></i> 
+                                    <span class="email-text"><?php echo htmlspecialchars($contactDetail['email']); ?></span>
+                                </a>
+                                <?php if (!empty($contactDetail['phone'])): ?>
+                                <a href="tel:<?php echo $contactDetail['phone']; ?>" class="email-link">
+                                    <i class="fas fa-phone"></i> 
+                                    <span><?php echo htmlspecialchars($contactDetail['phone']); ?></span>
+                                </a>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="message-date-full">
+                            Received: <?php echo date('F j, Y \a\t g:i A', strtotime($contactDetail['created_at'])); ?>
+                        </div>
+                    </div>
+                    <button class="btn-reply" onclick="showContactReplyForm()">
+                        <i class="fas fa-reply"></i>
+                        <span class="reply-text">Reply via Email</span>
+                    </button>
+                </div>
+                
+                <!-- Contact Message Content -->
+                <div class="conversation-messages" id="conversationMessages">
+                    <div class="contact-message-full">
+                        <div class="message-bubble contact-bubble">
+                            <div class="message-text">
+                                <?php echo nl2br(htmlspecialchars($contactDetail['message'])); ?>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Previous Replies -->
+                    <?php if (!empty($contactReplies)): ?>
+                        <div class="reply-history">
+                            <h4>Previous Replies</h4>
+                            <?php foreach ($contactReplies as $reply): ?>
+                            <div class="message-bubble admin-message">
+                                <div class="message-meta">
+                                    <span class="message-author">You (Support)</span>
+                                    <span class="message-time"><?php echo date('M j, Y g:i A', strtotime($reply['sent_at'])); ?></span>
+                                </div>
+                                <div class="message-text">
+                                    <?php echo nl2br(htmlspecialchars($reply['reply_message'])); ?>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                
+                <!-- Reply Form for Contact -->
+                <div class="reply-form" id="contactReplyForm" style="display: none;">
+                    <form method="POST">
+                        <input type="hidden" name="message_id" value="<?php echo $viewMessageId; ?>">
+                        <div class="form-group">
+                            <label class="reply-label">
+                                <i class="fas fa-envelope"></i> 
+                                Replying to: <strong><?php echo htmlspecialchars($contactDetail['email']); ?></strong>
+                            </label>
+                            <textarea name="reply_message" rows="4" placeholder="Type your email reply to <?php echo htmlspecialchars($contactDetail['name']); ?>..." required></textarea>
+                        </div>
+                        
+                        <!-- Send copy to myself option -->
+                        <div class="form-group checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="send_copy" value="1" checked>
+                                <span>Send a copy to myself</span>
+                            </label>
+                            <small class="help-text">A copy will be sent to your email address</small>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="button" class="btn-cancel" onclick="hideContactReplyForm()">Cancel</button>
+                            <button type="submit" name="reply_to_contact" class="btn-send">
+                                <i class="fas fa-paper-plane"></i> Send Email Reply
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                
             <?php else: ?>
                 <div class="no-conversation">
                     <div class="no-conversation-content">
                         <i class="fas fa-comments"></i>
-                        <h3>Select a client message</h3>
-                        <p>Choose a message from the list to view the conversation and reply</p>
+                        <h3>Select a message</h3>
+                        <p>Choose a message from the list to view the details and reply</p>
                     </div>
                 </div>
             <?php endif; ?>
@@ -2210,6 +2567,142 @@ h1, h2, h3, h4, h5, h6 {
     }
 }
 </style>
+<style>
+/* ========================================
+   ADDITIONAL STYLES FOR CONTACT REPLIES
+   ======================================== */
+
+.contact-message-full {
+    margin-bottom: 20px;
+}
+
+.contact-bubble {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    max-width: 100%;
+}
+
+.reply-history {
+    margin-top: 30px;
+    border-top: 2px dashed #e2e8f0;
+    padding-top: 20px;
+}
+
+.reply-history h4 {
+    font-size: 14px;
+    color: #64748b;
+    margin-bottom: 15px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.message-date-full {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 8px;
+}
+
+.message-bubble.admin-message {
+    background: #f1f5f9;
+    margin-bottom: 10px;
+}
+
+.message-bubble.admin-message:last-child {
+    margin-bottom: 0;
+}
+
+.reply-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    color: #475569;
+    font-size: 14px;
+}
+
+.reply-label i {
+    color: #667eea;
+}
+
+.checkbox-group {
+    margin: 15px 0;
+    padding: 10px;
+    background: #f8fafc;
+    border-radius: 8px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #475569;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #667eea;
+}
+
+.help-text {
+    display: block;
+    margin-top: 5px;
+    margin-left: 26px;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .contact-bubble {
+        background: #1e293b;
+        border-color: #334155;
+    }
+    
+    .reply-history h4 {
+        color: #94a3b8;
+    }
+    
+    .message-bubble.admin-message {
+        background: #334155;
+    }
+    
+    .reply-label {
+        color: #cbd5e1;
+    }
+    
+    .checkbox-group {
+        background: #1e293b;
+    }
+    
+    .checkbox-label {
+        color: #cbd5e1;
+    }
+    
+    .help-text {
+        color: #64748b;
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .reply-label {
+        font-size: 13px;
+        flex-wrap: wrap;
+    }
+    
+    .checkbox-group {
+        padding: 8px;
+    }
+    
+    .checkbox-label {
+        font-size: 13px;
+    }
+}
+</style>
 
 <script>
 // Mobile menu toggle
@@ -2264,28 +2757,60 @@ function goBackToList() {
     // Update URL without view parameter
     const url = new URL(window.location.href);
     url.searchParams.delete('view');
+    url.searchParams.delete('type');
     window.history.pushState({}, '', url);
 }
 
-// Show reply form
+// Show reply form for client messages
 function showReplyForm() {
     const replyForm = document.getElementById('replyForm');
-    replyForm.style.display = 'block';
-    
-    // Scroll to reply form
-    setTimeout(() => {
-        replyForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 100);
-    
-    // Focus on textarea
-    setTimeout(() => {
-        replyForm.querySelector('textarea').focus();
-    }, 200);
+    if (replyForm) {
+        replyForm.style.display = 'block';
+        
+        // Scroll to reply form
+        setTimeout(() => {
+            replyForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+        
+        // Focus on textarea
+        setTimeout(() => {
+            replyForm.querySelector('textarea').focus();
+        }, 200);
+    }
 }
 
-// Hide reply form
+// Hide reply form for client messages
 function hideReplyForm() {
-    document.getElementById('replyForm').style.display = 'none';
+    const replyForm = document.getElementById('replyForm');
+    if (replyForm) {
+        replyForm.style.display = 'none';
+    }
+}
+
+// Show reply form for contact messages
+function showContactReplyForm() {
+    const replyForm = document.getElementById('contactReplyForm');
+    if (replyForm) {
+        replyForm.style.display = 'block';
+        
+        // Scroll to reply form
+        setTimeout(() => {
+            replyForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+        
+        // Focus on textarea
+        setTimeout(() => {
+            replyForm.querySelector('textarea').focus();
+        }, 200);
+    }
+}
+
+// Hide reply form for contact messages
+function hideContactReplyForm() {
+    const replyForm = document.getElementById('contactReplyForm');
+    if (replyForm) {
+        replyForm.style.display = 'none';
+    }
 }
 
 // Handle window resize

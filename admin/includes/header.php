@@ -14,6 +14,7 @@ try {
     $pendingTasks = db()->fetch("SELECT COUNT(*) as count FROM project_tasks WHERE status = 'pending' AND assigned_to = ?", [$_SESSION['user_id'] ?? 0])['count'] ?? 0;
     $overdueInvoices = db()->fetch("SELECT COUNT(*) as count FROM project_invoices WHERE status = 'overdue'")['count'] ?? 0;
 } catch (Exception $e) {
+    error_log("Header notification error: " . $e->getMessage());
     $unreadMessages = 0;
     $pendingTestimonials = 0;
     $pendingComments = 0;
@@ -35,12 +36,21 @@ try {
         'tasks' => db()->fetch("SELECT COUNT(*) as count FROM project_tasks WHERE status != 'completed'")['count'] ?? 0
     ];
 } catch (Exception $e) {
+    error_log("Header stats error: " . $e->getMessage());
     $quickStats = [
         'projects' => 0,
         'clients' => 0,
         'revenue' => 0,
         'tasks' => 0
     ];
+}
+
+// Helper function to check if a nav item is active
+function isActive($pages, $currentPage) {
+    if (is_array($pages)) {
+        return in_array($currentPage, $pages) ? 'active' : '';
+    }
+    return $pages === $currentPage ? 'active' : '';
 }
 ?>
 <!DOCTYPE html>
@@ -53,7 +63,7 @@ try {
     <!-- Fonts & Icons -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-        <link rel="stylesheet" href="../../assets/css/admin.css">
+    <link rel="stylesheet" href="../../assets/css/admin.css">
     
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="<?php echo defined('BASE_URL') ? BASE_URL : ''; ?>/assets/images/favicon.ico">
@@ -469,7 +479,7 @@ try {
         }
 
         .submenu-toggle {
-            position: relative;
+            cursor: pointer;
         }
 
         .submenu-arrow {
@@ -502,6 +512,9 @@ try {
             font-size: 0.9rem;
             color: var(--gray-400);
             white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .submenu li a:hover {
@@ -512,6 +525,10 @@ try {
         .submenu li a i {
             width: 18px;
             font-size: 0.9rem;
+        }
+
+        .submenu .nav-badge {
+            margin-left: auto;
         }
 
         /* Sidebar Footer */
@@ -1411,12 +1428,14 @@ try {
             .notification-dropdown,
             .user-dropdown {
                 position: fixed;
-                top: auto;
+                top: var(--header-height);
                 left: 10px;
                 right: 10px;
                 width: auto;
                 max-width: none;
-                margin-top: 10px;
+                margin-top: 5px;
+                max-height: calc(100vh - var(--header-height) - 20px);
+                overflow-y: auto;
             }
             
             .notification-dropdown {
@@ -1598,9 +1617,10 @@ try {
             <!-- Sidebar Header with Logo -->
             <div class="sidebar-header">
                 <a href="index.php" class="sidebar-brand">
-                    <img src="<?php echo defined('UPLOAD_URL') ? UPLOAD_URL : ''; ?>logo.png" 
+                    <img src="<?php echo defined('UPLOAD_URL') ? UPLOAD_URL . 'logo.png' : ''; ?>" 
                          alt="<?php echo defined('SITE_NAME') ? SITE_NAME : 'Admin'; ?>" 
-                         class="sidebar-logo">
+                         class="sidebar-logo"
+                         onerror="this.onerror=null; this.src='../../assets/images/default-logo.png';">
                     <div class="brand-text">
                         <h2><?php echo defined('SITE_NAME') ? SITE_NAME : 'Admin Panel'; ?></h2>
                         <p>Administration Panel</p>
@@ -1678,12 +1698,14 @@ try {
                             <span>Projects</span>
                         </a>
                     </li>
-<li class="nav-item <?php echo in_array($currentPage, ['pages.php', 'sections.php']) ? 'active' : ''; ?>">
-    <a href="pages.php">
-        <i class="fas fa-file-alt"></i>
-        <span>Pages</span>
-    </a>
-</li>
+                    
+                    <li class="nav-item <?php echo in_array($currentPage, ['pages.php', 'sections.php']) ? 'active' : ''; ?>">
+                        <a href="pages.php">
+                            <i class="fas fa-file-alt"></i>
+                            <span>Pages</span>
+                        </a>
+                    </li>
+                    
                     <li class="nav-item <?php echo $currentPage == 'skills.php' ? 'active' : ''; ?>">
                         <a href="skills.php">
                             <i class="fas fa-chart-bar"></i>
@@ -1701,13 +1723,13 @@ try {
                         </a>
                     </li>
 
-                    <li class="nav-item has-submenu <?php echo in_array($currentPage, ['blog.php', 'blog-posts.php', 'blog-categories.php', 'blog-comments.php']) ? 'active' : ''; ?>">
-                        <a href="#" class="submenu-toggle">
+                    <li class="nav-item has-submenu <?php echo in_array($currentPage, ['blog.php', 'blog-posts.php', 'blog-categories.php', 'blog-comments.php']) ? 'active' : ''; ?>" id="blogMenu">
+                        <a href="#" class="submenu-toggle" onclick="toggleSubmenu(this); return false;">
                             <i class="fas fa-blog"></i>
                             <span>Blog</span>
                             <i class="fas fa-chevron-right submenu-arrow"></i>
                         </a>
-                        <ul class="submenu">
+                        <ul class="submenu" id="blogSubmenu">
                             <li>
                                 <a href="blog.php?type=posts">
                                     <i class="fas fa-file-alt"></i>
@@ -1786,6 +1808,12 @@ try {
                         </a>
                     </li>
 
+                    <li class="nav-item <?php echo $currentPage == 'newsletter.php' ? 'active' : ''; ?>">
+                        <a href="newsletter.php">
+                            <i class="fas fa-envelope-open-text"></i>
+                            <span>Newsletter</span>
+                        </a>
+                    </li>
                     <li class="nav-item <?php echo $currentPage == 'email-templates.php' ? 'active' : ''; ?>">
                         <a href="email-templates.php">
                             <i class="fas fa-envelope-open-text"></i>
@@ -1802,24 +1830,10 @@ try {
 
                     <li class="nav-divider">ANALYTICS</li>
 
-                    <li class="nav-item <?php echo in_array($currentPage, ['seo.php', 'seo-metadata.php', 'seo-redirects.php', 'seo-sitemap.php']) ? 'active' : ''; ?>">
-                        <a href="seo.php">
-                            <i class="fas fa-search"></i>
-                            <span>SEO</span>
-                        </a>
-                    </li>
-
                     <li class="nav-item <?php echo $currentPage == 'analytics.php' ? 'active' : ''; ?>">
                         <a href="analytics.php">
                             <i class="fas fa-chart-line"></i>
                             <span>Analytics</span>
-                        </a>
-                    </li>
-
-                    <li class="nav-item <?php echo $currentPage == 'dashboard-widgets.php' ? 'active' : ''; ?>">
-                        <a href="dashboard-widgets.php">
-                            <i class="fas fa-puzzle-piece"></i>
-                            <span>Dashboard Widgets</span>
                         </a>
                     </li>
 
@@ -2055,10 +2069,6 @@ try {
                                 <i class="fas fa-cog"></i>
                                 <span>Settings</span>
                             </a>
-                            <a href="dashboard-widgets.php" class="dropdown-item">
-                                <i class="fas fa-puzzle-piece"></i>
-                                <span>Customize Dashboard</span>
-                            </a>
                             <div class="dropdown-divider"></div>
                             <a href="logout.php" class="dropdown-item logout">
                                 <i class="fas fa-sign-out-alt"></i>
@@ -2081,9 +2091,9 @@ try {
                     <?php foreach ($breadcrumbs as $crumb): ?>
                         <i class="fas fa-chevron-right"></i>
                         <?php if (isset($crumb['url'])): ?>
-                            <a href="<?php echo $crumb['url']; ?>"><?php echo $crumb['title']; ?></a>
+                            <a href="<?php echo $crumb['url']; ?>"><?php echo htmlspecialchars($crumb['title']); ?></a>
                         <?php else: ?>
-                            <span><?php echo $crumb['title']; ?></span>
+                            <span><?php echo htmlspecialchars($crumb['title']); ?></span>
                         <?php endif; ?>
                     <?php endforeach; ?>
                 </div>

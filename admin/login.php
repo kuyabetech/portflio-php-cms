@@ -235,11 +235,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </button>
         </form>
         
-        <div class="demo-credentials">
-            <p><i class="fas fa-info-circle"></i> Demo Credentials:</p>
-            <p>Username: <code>admin</code></p>
-            <p>Password: <code>Admin@123</code></p>
-        </div>
+      
         
         <div class="login-footer">
             &copy; <?php echo date('Y'); ?> <?php echo SITE_NAME; ?>. All rights reserved.

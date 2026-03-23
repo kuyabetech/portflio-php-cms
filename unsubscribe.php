@@ -1,94 +1,81 @@
 <?php
 // unsubscribe.php
-// Handle newsletter unsubscriptions
+// Handle newsletter unsubscribes
 
 require_once 'includes/init.php';
 
 $email = isset($_GET['email']) ? urldecode($_GET['email']) : '';
 
-if ($email) {
-    $subscriber = db()->fetch("SELECT * FROM newsletter_subscribers WHERE email = ?", [$email]);
-    
-    if ($subscriber) {
-        db()->update('newsletter_subscribers', [
-            'status' => 'unsubscribed',
-            'unsubscribed_at' => date('Y-m-d H:i:s')
-        ], 'id = :id', ['id' => $subscriber['id']]);
-        
-        $message = "You have been successfully unsubscribed from our newsletter.";
-    } else {
-        $message = "Email not found in our subscriber list.";
-    }
-} else {
-    $message = "No email provided.";
+if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    die('Invalid email address');
 }
+
+// Update subscriber status
+db()->update('newsletter_subscribers', [
+    'status' => 'unsubscribed',
+    'unsubscribed_at' => date('Y-m-d H:i:s')
+], 'email = :email', ['email' => $email]);
+
+// Show confirmation page
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unsubscribe - <?php echo SITE_NAME; ?></title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <title>Unsubscribed - <?php echo SITE_NAME; ?></title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
-            margin: 0;
+            min-height: 100vh;
         }
-        
         .container {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
             max-width: 500px;
+            background: white;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
             text-align: center;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
         }
-        
-        h1 {
-            color: #333;
+        .icon {
+            font-size: 64px;
+            color: #2563eb;
             margin-bottom: 20px;
         }
-        
-        p {
-            color: #666;
-            line-height: 1.6;
-            margin-bottom: 30px;
+        h1 {
+            color: #1e293b;
+            margin-bottom: 15px;
         }
-        
+        p {
+            color: #64748b;
+            line-height: 1.6;
+            margin-bottom: 25px;
+        }
         .btn {
             display: inline-block;
             padding: 12px 30px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #2563eb;
             color: white;
             text-decoration: none;
             border-radius: 8px;
             font-weight: 500;
-            transition: all 0.3s ease;
+            transition: background 0.3s ease;
         }
-        
         .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102,126,234,0.3);
-        }
-        
-        .icon {
-            font-size: 4rem;
-            margin-bottom: 20px;
+            background: #1d4ed8;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="icon">📧</div>
-        <h1>Unsubscribe</h1>
-        <p><?php echo htmlspecialchars($message); ?></p>
+        <h1>Successfully Unsubscribed</h1>
+        <p>You have been unsubscribed from our newsletter. You will no longer receive emails from us.</p>
         <a href="<?php echo BASE_URL; ?>" class="btn">Return to Homepage</a>
     </div>
 </body>
